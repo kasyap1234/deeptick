@@ -4,19 +4,13 @@ import { researchService } from '../../services/research.service.js';
 import { embeddingService } from '../../services/embedding.service.js';
 import { db } from '../../db/connection.js';
 import { researchJobs } from '../../db/schema.js';
-import type { ResearchJob } from '../../types/research.types.js';
+import { logger } from '../../utils/logger.js';
 
 const CreateResearchSchema = t.Object({
   query: t.String({ minLength: 1 }),
   context: t.Optional(t.String()),
   focusAreas: t.Optional(t.Array(t.String())),
   maxResults: t.Optional(t.Number()),
-});
-
-const SearchResearchSchema = t.Object({
-  q: t.String({ minLength: 1 }),
-  limit: t.Optional(t.Number()),
-  threshold: t.Optional(t.Number()),
 });
 
 export const researchRoutes = new Elysia({ prefix: '/api/research' })
@@ -121,7 +115,7 @@ export const researchRoutes = new Elysia({ prefix: '/api/research' })
         })),
       };
     } catch (error) {
-      console.error('Error searching research:', error);
+      logger.error({ error }, 'Error searching research');
       set.status = 500;
       return {
         success: false,

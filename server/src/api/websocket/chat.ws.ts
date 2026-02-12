@@ -1,5 +1,6 @@
 import { Elysia, t } from 'elysia';
 import { enhancedChatService } from '../../services/enhanced-chat.service.js';
+import { logger } from '../../utils/logger.js';
 
 interface ChatStreamMessage {
   type: 'chat_message' | 'stream_chunk' | 'stream_complete' | 'error';
@@ -41,7 +42,8 @@ export const chatWebSocket = new Elysia()
     },
 
     async message(ws, message) {
-      const conversationId = ws.params.conversationId;
+      const { params } = ws.data as { params: { conversationId: string } };
+      const conversationId = params.conversationId;
 
       try {
         let data: { content: string; jobId?: string };
@@ -85,7 +87,7 @@ export const chatWebSocket = new Elysia()
         }
 
       } catch (error) {
-        console.error('Chat WebSocket error:', error);
+        logger.error({ error }, 'Chat WebSocket error');
         ws.send(JSON.stringify({
           type: 'error',
           conversationId,
@@ -95,6 +97,7 @@ export const chatWebSocket = new Elysia()
     },
 
     close(ws) {
-      console.log(`Chat WebSocket closed for conversation: ${ws.params.conversationId}`);
+      const { params } = ws.data as { params: { conversationId: string } };
+      logger.info(`Chat WebSocket closed for conversation: ${params.conversationId}`);
     },
   });

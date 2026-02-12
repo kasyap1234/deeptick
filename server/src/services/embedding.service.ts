@@ -1,5 +1,6 @@
 import { OpenAIEmbeddings } from '@langchain/openai';
 import { config } from '../config/index.js';
+import { logger } from '../utils/logger.js';
 
 export interface EmbeddingServiceConfig {
   modelName: string;
@@ -28,7 +29,7 @@ export class EmbeddingService {
       const embedding = await this.embedder.embedQuery(text);
       return embedding;
     } catch (error) {
-      console.error('Error embedding query:', error);
+      logger.error({ error }, 'Error embedding query');
       throw new Error(`Failed to embed query: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -38,7 +39,7 @@ export class EmbeddingService {
       const embeddings = await this.embedder.embedDocuments(documents);
       return embeddings;
     } catch (error) {
-      console.error('Error embedding documents:', error);
+      logger.error({ error }, 'Error embedding documents');
       throw new Error(`Failed to embed documents: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }

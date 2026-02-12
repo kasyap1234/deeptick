@@ -6,6 +6,7 @@ import { healthRoutes } from './api/routes/health.routes.js';
 import { researchWebSocket } from './api/websocket/research.ws.js';
 import { chatWebSocket } from './api/websocket/chat.ws.js';
 import { config } from './config/index.js';
+import { logger } from './utils/logger.js';
 
 const app = new Elysia()
   .use(cors({
@@ -18,7 +19,7 @@ const app = new Elysia()
   .use(researchWebSocket)
   .use(chatWebSocket)
   .onError(({ error, set }) => {
-    console.error('Error:', error);
+    logger.error({ error }, 'Unhandled server error');
     set.status = 500;
     return {
       success: false,
@@ -27,9 +28,9 @@ const app = new Elysia()
   });
 
 app.listen(config.PORT, () => {
-  console.log(`Server listening at http://localhost:${config.PORT}`);
-  console.log(`Environment: ${config.NODE_ENV}`);
-  console.log(`CORS origins: ${config.corsOrigin.join(', ')}`);
+  logger.info(`Server listening at http://localhost:${config.PORT}`);
+  logger.info(`Environment: ${config.NODE_ENV}`);
+  logger.info(`CORS origins: ${config.corsOrigin.join(', ')}`);
 });
 
 export type App = typeof app;

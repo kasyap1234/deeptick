@@ -3,6 +3,7 @@ import { researchJobs, type NewResearchJob } from '../db/schema.js';
 import { vectorStoreService } from './vector-store.service.js';
 import { embeddingService } from './embedding.service.js';
 import type { InstitutionalResearchReport, ResearchRequest } from '../types/research.types.js';
+import { logger } from '../utils/logger.js';
 
 export interface QueryRouterResult {
   shouldSearch: boolean;
@@ -47,7 +48,7 @@ export class QueryRouterService {
       
       // If similarity is very high, return cached result
       if (bestMatch.similarity >= this.similarityThreshold && bestMatch.result) {
-        console.log(`Cache hit: Query "${query}" matched with similarity ${bestMatch.similarity}`);
+        logger.info(`Cache hit: Query "${query}" matched with similarity ${bestMatch.similarity}`);
         return {
           shouldSearch: false,
           cachedResult: bestMatch.result,
@@ -62,7 +63,7 @@ export class QueryRouterService {
 
       // If partial match, still return it but indicate we might want fresh data
       if (bestMatch.similarity >= this.partialMatchThreshold) {
-        console.log(`Partial cache hit: Query "${query}" matched with similarity ${bestMatch.similarity}`);
+        logger.info(`Partial cache hit: Query "${query}" matched with similarity ${bestMatch.similarity}`);
         return {
           shouldSearch: true,
           cachedResult: bestMatch.result,

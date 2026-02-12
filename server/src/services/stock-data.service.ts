@@ -1,4 +1,4 @@
-import { config } from '../config/index.js';
+import { logger } from '../utils/logger.js';
 
 export interface StockQuote {
   symbol: string;
@@ -80,7 +80,7 @@ export class StockDataService {
         timestamp: new Date(),
       };
     } catch (error) {
-      console.error('Error fetching stock quote:', error);
+      logger.error({ error }, 'Error fetching stock quote');
       return null;
     }
   }
@@ -114,7 +114,7 @@ export class StockDataService {
         founded: parseInt(data.YearFounded) || undefined,
       };
     } catch (error) {
-      console.error('Error fetching stock profile:', error);
+      logger.error({ error }, 'Error fetching stock profile');
       return null;
     }
   }
@@ -153,7 +153,7 @@ export class StockDataService {
         quickRatio: this.parseMetric(data.QuickRatio),
       };
     } catch (error) {
-      console.error('Error fetching financial metrics:', error);
+      logger.error({ error }, 'Error fetching financial metrics');
       return null;
     }
   }
@@ -187,7 +187,7 @@ export class StockDataService {
         }))
         .slice(0, 100); // Return last 100 data points
     } catch (error) {
-      console.error('Error fetching intraday prices:', error);
+      logger.error({ error }, 'Error fetching intraday prices');
       return [];
     }
   }
@@ -212,7 +212,7 @@ export class StockDataService {
         region: match['4. region'],
       }));
     } catch (error) {
-      console.error('Error searching symbols:', error);
+      logger.error({ error }, 'Error searching symbols');
       return [];
     }
   }
@@ -238,7 +238,7 @@ export class StockDataService {
         timestamp: item.time_published,
       }));
     } catch (error) {
-      console.error('Error fetching news:', error);
+      logger.error({ error }, 'Error fetching news');
       return [];
     }
   }

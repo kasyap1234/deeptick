@@ -1,0 +1,32 @@
+name: deeptick-research-agent
+description: |
+  DeepTick AI Research Platform - Institutional-grade investment research
+  with 18 specialized subagents for comprehensive market analysis.
+type: agent
+runtime:
+  python_version: "3.11"
+env:
+  - DO_GENAI_API_KEY
+  - DO_GENAI_ENDPOINT
+  - EXASEARCH_API_KEY
+  - EXA_API_KEY
+  - DATABASE_URL
+  - ALPHA_VANTAGE_API_KEY
+  - DEEP_RESEARCH_ORCHESTRATOR_MODEL
+  - DEEP_RESEARCH_SUBAGENT_MODEL
+  - DEEP_RESEARCH_AUDITOR_MODEL
+  - NODE_ENV
+  - LOG_LEVEL
+  - CORS_ORIGINS
+resources:
+  memory: 2Gi
+  timeout: 300
+scaling:
+  min_instances: 0
+  max_instances: 5
+entrypoint:
+  file: main.py
+  function: main
+health_check:
+  path: /health
+  port: 3001

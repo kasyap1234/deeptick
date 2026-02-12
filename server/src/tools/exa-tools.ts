@@ -8,6 +8,8 @@ export interface NormalizedExaResult {
   url: string;
   title: string;
   snippet?: string;
+  highlights?: string[];
+  summary?: string;
   publishedDate?: string;
   score?: number;
 }
@@ -39,32 +41,40 @@ function normalizeResults(raw: unknown): NormalizedExaResult[] {
       ? (candidate as { results?: unknown[] }).results ?? []
       : [];
 
-  return items
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null;
-      const record = item as Record<string, unknown>;
-      const url = typeof record.url === 'string' ? record.url : '';
-      const title = typeof record.title === 'string' ? record.title : 'Untitled Source';
-      const snippet =
-        typeof record.snippet === 'string'
-          ? record.snippet
-          : typeof record.text === 'string'
-            ? record.text.slice(0, 400)
-            : undefined;
-      const publishedDate = typeof record.publishedDate === 'string' ? record.publishedDate : undefined;
-      const score = typeof record.score === 'number' ? record.score : undefined;
+  const results: NormalizedExaResult[] = [];
 
-      if (!url) return null;
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    const url = typeof record.url === 'string' ? record.url : '';
+    const title = typeof record.title === 'string' ? record.title : 'Untitled Source';
+    const snippet =
+      typeof record.snippet === 'string'
+        ? record.snippet
+        : typeof record.text === 'string'
+          ? record.text.slice(0, 400)
+          : undefined;
+    const highlights = Array.isArray(record.highlights)
+      ? record.highlights.filter((value): value is string => typeof value === 'string')
+      : undefined;
+    const summary = typeof record.summary === 'string' ? record.summary : undefined;
+    const publishedDate = typeof record.publishedDate === 'string' ? record.publishedDate : undefined;
+    const score = typeof record.score === 'number' ? record.score : undefined;
 
-      return {
-        url,
-        title,
-        snippet,
-        publishedDate,
-        score,
-      } satisfies NormalizedExaResult;
-    })
-    .filter((value): value is NormalizedExaResult => value !== null);
+    if (!url) continue;
+
+    results.push({
+      url,
+      title,
+      snippet,
+      highlights,
+      summary,
+      publishedDate,
+      score,
+    });
+  }
+
+  return results;
 }
 
 export const exaSearchTool = tool(
@@ -73,6 +83,13 @@ export const exaSearchTool = tool(
       client: exaClient,
       searchArgs: {
         numResults: maxResults,
+        highlights: {
+          numSentences: 2,
+          highlightsPerUrl: 2,
+        },
+        summary: {
+          query,
+        },
       },
     });
 
@@ -104,6 +121,13 @@ export const exaFindSimilarTool = tool(
       client: exaClient,
       searchArgs: {
         numResults: maxResults,
+        highlights: {
+          numSentences: 2,
+          highlightsPerUrl: 2,
+        },
+        summary: {
+          query: url,
+        },
       },
     });
 

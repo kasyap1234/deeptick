@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
+import pino from 'pino';
 
 dotenv.config();
 
@@ -37,29 +38,31 @@ const envSchema = z.object({
   PORT: z.string().default('3001').transform(Number),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  CORS_ORIGINS: z.string().optional(),
 
   // Vector Store
   VECTOR_DIMENSION: z.string().default('1536').transform(Number),
   VECTOR_TABLE_NAME: z.string().default('stock_research_embeddings'),
 });
 
+const envLogger = pino({ level: 'error' });
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
-  console.error('Environment validation failed:', parsed.error.format());
+  envLogger.error({ errors: parsed.error.format() }, 'Environment validation failed');
   process.exit(1);
 }
 
 const hasExaKey = Boolean(parsed.data.EXASEARCH_API_KEY || parsed.data.EXA_API_KEY);
 if (!hasExaKey) {
-  console.error('Environment validation failed: EXASEARCH_API_KEY (preferred) or EXA_API_KEY must be set.');
+  envLogger.error('Environment validation failed: EXASEARCH_API_KEY (preferred) or EXA_API_KEY must be set.');
   process.exit(1);
 }
 
 const vectorDbUrl = (() => {
   if (parsed.data.VECTOR_DB_MODE === 'local') {
     if (!parsed.data.LOCAL_DATABASE_URL) {
-      console.error('Environment validation failed: LOCAL_DATABASE_URL must be set when VECTOR_DB_MODE=local.');
+      envLogger.error('Environment validation failed: LOCAL_DATABASE_URL must be set when VECTOR_DB_MODE=local.');
       process.exit(1);
     }
     return parsed.data.LOCAL_DATABASE_URL;
@@ -67,26 +70,33 @@ const vectorDbUrl = (() => {
 
   if (parsed.data.VECTOR_DB_MODE === 'managed') {
     if (!parsed.data.MANAGED_DATABASE_URL) {
-      console.error('Environment validation failed: MANAGED_DATABASE_URL must be set when VECTOR_DB_MODE=managed.');
+      envLogger.error('Environment validation failed: MANAGED_DATABASE_URL must be set when VECTOR_DB_MODE=managed.');
       process.exit(1);
     }
     return parsed.data.MANAGED_DATABASE_URL;
   }
 
   if (!parsed.data.DATABASE_URL) {
-    console.error('Environment validation failed: DATABASE_URL must be set when VECTOR_DB_MODE=database_url.');
+    envLogger.error('Environment validation failed: DATABASE_URL must be set when VECTOR_DB_MODE=database_url.');
     process.exit(1);
   }
 
   return parsed.data.DATABASE_URL;
 })();
 
+const getCorsOrigins = (): string[] => {
+  if (parsed.data.CORS_ORIGINS) {
+    return parsed.data.CORS_ORIGINS.split(',').map((origin) => origin.trim());
+  }
+  return parsed.data.NODE_ENV === 'production'
+    ? ['https://deeptick.app']
+    : ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:3001'];
+};
+
 export const config = {
   ...parsed.data,
   vectorDatabaseUrl: vectorDbUrl,
   isDevelopment: parsed.data.NODE_ENV === 'development',
   isProduction: parsed.data.NODE_ENV === 'production',
-  corsOrigin: parsed.data.NODE_ENV === 'production'
-    ? ['https://yourdomain.com']
-    : ['http://localhost:3000', 'http://localhost:5173'],
+  corsOrigin: getCorsOrigins(),
 };
