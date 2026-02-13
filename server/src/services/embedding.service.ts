@@ -12,15 +12,24 @@ export class EmbeddingService {
   private config: EmbeddingServiceConfig;
 
   constructor(customConfig?: Partial<EmbeddingServiceConfig>) {
+    const useGradient = config.DO_GENAI_ENDPOINT.includes('gradient');
+
     this.config = {
       modelName: customConfig?.modelName ?? 'text-embedding-3-small',
       dimensions: customConfig?.dimensions ?? 1536,
     };
 
+    if (useGradient) {
+      this.config.modelName = 'gradient/text-embedding-ada-002';
+    }
+
     this.embedder = new OpenAIEmbeddings({
       model: this.config.modelName,
       dimensions: this.config.dimensions,
       apiKey: config.DO_GENAI_API_KEY,
+      configuration: {
+        baseURL: config.DO_GENAI_ENDPOINT,
+      },
     });
   }
 

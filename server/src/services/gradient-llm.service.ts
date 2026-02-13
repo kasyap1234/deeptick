@@ -2,6 +2,8 @@ import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages';
 import { config } from '../config/index.js';
 import type { InstitutionalResearchReport } from '../types/research.types.js';
+import { logger } from '../utils/logger.js';
+import { gradientAgentService } from './gradient-agent.service.js';
 
 export interface ChatContext {
   conversationId: string;
@@ -26,22 +28,70 @@ export interface LLMResponse {
 
 export class GradientLLMService {
   private llm: ChatOpenAI;
+  private agentId: string | null = null;
+  private initialized = false;
 
   constructor() {
-    // Gradient AI is compatible with OpenAI API format
+    if (!config.isUsingGradient) {
+      throw new Error('Gradient mode not enabled. Configure DO_GENAI_API_KEY and GRADIENT_PROJECT_ID.');
+    }
+
     this.llm = new ChatOpenAI({
-      modelName: 'gradient/llama-3-70b-instruct', // or your preferred Gradient model
+      modelName: 'n/a',
       temperature: 0.7,
       maxTokens: 2000,
       streaming: true,
-      openAIApiKey: config.DO_GENAI_API_KEY,
+      openAIApiKey: 'dummy',
       configuration: {
-        baseURL: config.DO_GENAI_ENDPOINT,
+        baseURL: 'placeholder',
       },
     });
   }
 
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+
+    const agents = await gradientAgentService.listAgents();
+    let agent = agents.find(a => a.name === 'deeptick-llm');
+
+    if (!agent) {
+      logger.info('Creating DeepTick LLM agent');
+      const created = await gradientAgentService.createAgentWithEndpoint({
+        name: 'deeptick-llm',
+        instruction: `You are DeepTick, an institutional-grade AI research assistant for retail investors. You provide comprehensive, evidence-based stock analysis.`,
+        description: 'Main LLM for DeepTick research platform',
+      });
+      agent = created;
+    }
+
+    if (!agent.endpoint || !agent.accessKey) {
+      throw new Error('Agent created but no endpoint available. Please check Gradient console.');
+    }
+
+    this.agentId = agent.id;
+    this.llm = new ChatOpenAI({
+      modelName: 'n/a',
+      temperature: 0.7,
+      maxTokens: 2000,
+      streaming: true,
+      openAIApiKey: agent.accessKey,
+      configuration: {
+        baseURL: `${agent.endpoint}/api/v1`,
+      },
+    });
+
+    this.initialized = true;
+    logger.info({ agentId: this.agentId, endpoint: agent.endpoint }, 'Gradient LLM service initialized');
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+  }
+
   async generateResponse(context: ChatContext): Promise<LLMResponse> {
+    await this.ensureInitialized();
     const messages = this.buildMessages(context);
     
     const response = await this.llm.invoke(messages);
@@ -53,6 +103,7 @@ export class GradientLLMService {
   }
 
   async *streamResponse(context: ChatContext): AsyncGenerator<string> {
+    await this.ensureInitialized();
     const messages = this.buildMessages(context);
     
     const stream = await this.llm.stream(messages);

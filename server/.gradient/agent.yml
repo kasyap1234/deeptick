@@ -2,6 +2,10 @@ name: deeptick-research-agent
 description: |
   DeepTick AI Research Platform - Institutional-grade investment research
   with 18 specialized subagents for comprehensive market analysis.
+  Now with full-stack Gradient AI Platform integration including:
+  - Gradient Agents (native)
+  - Gradient Knowledge Bases (RAG)
+  - Serverless Inference
 type: agent
 runtime:
   python_version: "3.11"
@@ -18,6 +22,11 @@ env:
   - NODE_ENV
   - LOG_LEVEL
   - CORS_ORIGINS
+  - GRADIENT_WORKSPACE_ID
+  - GRADIENT_PROJECT_ID
+  - GRADIENT_REGION
+  - GRADIENT_AGENT_MODEL_ID
+  - GRADIENT_KB_EMBEDDING_MODEL_URN
 resources:
   memory: 2Gi
   timeout: 300

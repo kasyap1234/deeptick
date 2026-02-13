@@ -1,6 +1,8 @@
 import { eq, sql, desc, cosineDistance, gt, and } from 'drizzle-orm';
 import { db } from '../db/connection.js';
 import { researchJobs, researchEmbeddings, messages } from '../db/schema.js';
+import { config } from '../config/index.js';
+import { logger } from '../utils/logger.js';
 import type { InstitutionalResearchReport } from '../types/research.types.js';
 
 export interface SimilaritySearchResult {
@@ -36,10 +38,19 @@ export class VectorStoreService {
     };
   }
 
+  private isAvailable(): boolean {
+    return config.isVectorDbAvailable;
+  }
+
   async findSimilarQueries(
     queryEmbedding: number[],
     threshold: number = this.config.similarityThreshold
   ): Promise<CachedQueryResult[]> {
+    if (!this.isAvailable()) {
+      logger.debug('Vector DB not available, skipping query cache check');
+      return [];
+    }
+
     const similarity = sql<number>`1 - (${cosineDistance(researchJobs.queryEmbedding, queryEmbedding)})`;
 
     const results = await db
@@ -71,6 +82,11 @@ export class VectorStoreService {
     sourceTypes?: string[],
     threshold: number = 0.75
   ): Promise<SimilaritySearchResult[]> {
+    if (!this.isAvailable()) {
+      logger.debug('Vector DB not available, skipping content search');
+      return [];
+    }
+
     const similarity = sql<number>`1 - (${cosineDistance(researchEmbeddings.contentEmbedding, queryEmbedding)})`;
 
     const results = await db
@@ -111,6 +127,11 @@ export class VectorStoreService {
     _query: string,
     embedding: number[]
   ): Promise<void> {
+    if (!this.isAvailable()) {
+      logger.debug('Vector DB not available, skipping query embedding storage');
+      return;
+    }
+
     await db
       .update(researchJobs)
       .set({
@@ -130,6 +151,11 @@ export class VectorStoreService {
       metadata?: Record<string, unknown>;
     }>
   ): Promise<void> {
+    if (!this.isAvailable()) {
+      logger.debug('Vector DB not available, skipping content embeddings storage');
+      return;
+    }
+
     if (chunks.length === 0) return;
 
     const embeddingsToInsert = chunks.map((chunk) => ({
@@ -148,6 +174,11 @@ export class VectorStoreService {
     messageId: string,
     embedding: number[]
   ): Promise<void> {
+    if (!this.isAvailable()) {
+      logger.debug('Vector DB not available, skipping message embedding storage');
+      return;
+    }
+
     await db
       .update(messages)
       .set({
@@ -161,6 +192,11 @@ export class VectorStoreService {
     queryEmbedding: number[],
     limit: number = 10
   ): Promise<SimilaritySearchResult[]> {
+    if (!this.isAvailable()) {
+      logger.debug('Vector DB not available, skipping related content retrieval');
+      return [];
+    }
+
     const similarity = sql<number>`1 - (${cosineDistance(researchEmbeddings.contentEmbedding, queryEmbedding)})`;
 
     const results = await db
@@ -190,10 +226,19 @@ export class VectorStoreService {
   }
 
   async deleteJobEmbeddings(jobId: string): Promise<void> {
+    if (!this.isAvailable()) {
+      logger.debug('Vector DB not available, skipping job embeddings deletion');
+      return;
+    }
     await db.delete(researchEmbeddings).where(eq(researchEmbeddings.jobId, jobId));
   }
 
   async cleanupOldEmbeddings(daysToKeep: number = 30): Promise<number> {
+    if (!this.isAvailable()) {
+      logger.debug('Vector DB not available, skipping cleanup');
+      return 0;
+    }
+
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 

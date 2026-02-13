@@ -1,10 +1,21 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const USE_GRADIENT = process.env.NEXT_PUBLIC_USE_GRADIENT === 'true';
 
 class ApiClient {
   private baseUrl: string;
+  private useGradient: boolean;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
+    this.useGradient = USE_GRADIENT;
+  }
+
+  get isUsingGradient(): boolean {
+    return this.useGradient;
+  }
+
+  private getEndpoint(baseEndpoint: string, gradientEndpoint: string): string {
+    return this.useGradient ? gradientEndpoint : baseEndpoint;
   }
 
   private async fetch<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -26,9 +37,10 @@ class ApiClient {
 
   // Research endpoints
   async createResearchJob(query: string, context?: string, focusAreas?: string[]) {
-    return this.fetch<{ success: boolean; data: { jobId: string; status: string; query: string; createdAt: string } }>('/api/research', {
+    const endpoint = this.getEndpoint('/api/research', '/api/gradient/research');
+    return this.fetch<{ success: boolean; data: { jobId: string; status: string; query: string; createdAt: string; agentId?: string; knowledgeBaseId?: string } }>(endpoint, {
       method: 'POST',
-      body: JSON.stringify({ query, context, focusAreas }),
+      body: JSON.stringify({ query, context, focusAreas, useGradientNative: this.useGradient }),
     });
   }
 
@@ -92,6 +104,40 @@ class ApiClient {
     const wsUrl = this.baseUrl.replace(/^http/, 'ws');
     return new WebSocket(`${wsUrl}/ws/chat/${conversationId}`);
   }
+
+  // Gradient-specific endpoints
+  async listKnowledgeBases() {
+    return this.fetch<{ success: boolean; data: Array<{ id: string; name: string; status: string; createdAt: string }> }>('/api/gradient/knowledge-bases');
+  }
+
+  async createKnowledgeBase(name: string, dataSources?: Array<{ name: string; url: string }>) {
+    return this.fetch<{ success: boolean; data: { id: string; name: string; status: string; createdAt: string } }>('/api/gradient/knowledge-bases', {
+      method: 'POST',
+      body: JSON.stringify({ name, dataSources }),
+    });
+  }
+
+  async searchKnowledgeBase(kbId: string, query: string, limit = 5) {
+    return this.fetch<{ success: boolean; data: Array<{ content: string; score: number; source?: string }> }>(`/api/gradient/knowledge-bases/${kbId}/search`, {
+      method: 'POST',
+      body: JSON.stringify({ query, limit }),
+    });
+  }
+
+  async invokeAgent(agentId: string, message: string, stream = false) {
+    const endpoint = stream 
+      ? `/api/gradient/agents/${agentId}/invoke?stream=true`
+      : `/api/gradient/agents/${agentId}/invoke`;
+    return this.fetch<{ success: boolean; data: { response: string; sessionId?: string } }>(endpoint, {
+      method: 'POST',
+      body: JSON.stringify({ message, stream }),
+    });
+  }
+
+  async listGradientAgents() {
+    return this.fetch<{ success: boolean; data: Array<{ id: string; name: string; modelUuid: string; createdAt: string }> }>('/api/gradient/agents');
+  }
 }
 
 export const api = new ApiClient(API_BASE_URL);
+export const useGradient = USE_GRADIENT;

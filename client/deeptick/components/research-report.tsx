@@ -34,9 +34,9 @@ interface ResearchReportViewProps {
 }
 
 const auditStatusConfig = {
-  pass: { icon: CheckCircle, color: "text-emerald-500", bgColor: "bg-emerald-500/10", label: "Verified" },
-  pass_with_caveats: { icon: AlertTriangle, color: "text-yellow-500", bgColor: "bg-yellow-500/10", label: "Verified with Caveats" },
-  fail: { icon: XCircle, color: "text-red-500", bgColor: "bg-red-500/10", label: "Failed Verification" },
+  pass: { icon: CheckCircle, color: "text-emerald-500", bgColor: "bg-emerald-500/10", borderColor: "border-emerald-500/20", label: "Verified" },
+  pass_with_caveats: { icon: AlertTriangle, color: "text-amber-500", bgColor: "bg-amber-500/10", borderColor: "border-amber-500/20", label: "Verified with Caveats" },
+  fail: { icon: XCircle, color: "text-red-500", bgColor: "bg-red-500/10", borderColor: "border-red-500/20", label: "Failed Verification" },
 };
 
 export function ResearchReportView({ job, onBack }: ResearchReportViewProps) {
@@ -113,12 +113,12 @@ export function ResearchReportView({ job, onBack }: ResearchReportViewProps) {
           </Card>
 
           <Tabs defaultValue="summary" className="w-full">
-            <TabsList className="w-full justify-start">
-              <TabsTrigger value="summary">Executive Summary</TabsTrigger>
-              <TabsTrigger value="bull">Bull Case</TabsTrigger>
-              <TabsTrigger value="bear">Bear Case</TabsTrigger>
-              <TabsTrigger value="scenarios">Scenarios</TabsTrigger>
-              <TabsTrigger value="sources">Sources</TabsTrigger>
+            <TabsList className="w-full justify-start gap-1 bg-transparent border-b border-border/50 rounded-none h-auto p-0">
+              <TabsTrigger value="summary" className="rounded-md data-[state=active]:bg-secondary data-[state=active]:shadow-sm">Executive Summary</TabsTrigger>
+              <TabsTrigger value="bull" className="rounded-md data-[state=active]:bg-secondary data-[state=active]:shadow-sm">Bull Case</TabsTrigger>
+              <TabsTrigger value="bear" className="rounded-md data-[state=active]:bg-secondary data-[state=active]:shadow-sm">Bear Case</TabsTrigger>
+              <TabsTrigger value="scenarios" className="rounded-md data-[state=active]:bg-secondary data-[state=active]:shadow-sm">Scenarios</TabsTrigger>
+              <TabsTrigger value="sources" className="rounded-md data-[state=active]:bg-secondary data-[state=active]:shadow-sm">Sources</TabsTrigger>
             </TabsList>
 
             <TabsContent value="summary" className="mt-6 space-y-4">

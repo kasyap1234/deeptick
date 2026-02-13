@@ -3,6 +3,7 @@ import { cors } from '@elysiajs/cors';
 import { researchRoutes } from './api/routes/research.routes.js';
 import { enhancedChatRoutes } from './api/routes/enhanced-chat.routes.js';
 import { healthRoutes } from './api/routes/health.routes.js';
+import { gradientRoutes } from './api/routes/gradient.routes.js';
 import { researchWebSocket } from './api/websocket/research.ws.js';
 import { chatWebSocket } from './api/websocket/chat.ws.js';
 import { config } from './config/index.js';
@@ -16,6 +17,7 @@ const app = new Elysia()
   .use(healthRoutes)
   .use(researchRoutes)
   .use(enhancedChatRoutes)
+  .use(gradientRoutes)
   .use(researchWebSocket)
   .use(chatWebSocket)
   .onError(({ error, set }) => {

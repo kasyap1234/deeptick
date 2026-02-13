@@ -3,46 +3,52 @@
 :root {
   --radius: 0.5rem;
   --background: 0 0% 100%;
-  --foreground: 0 0% 0%;
+  --foreground: 0 0% 9%;
   --card: 0 0% 100%;
-  --card-foreground: 0 0% 0%;
+  --card-foreground: 0 0% 9%;
   --popover: 0 0% 100%;
-  --popover-foreground: 0 0% 0%;
-  --primary: 0 0% 0%;
+  --popover-foreground: 0 0% 9%;
+  --primary: 0 0% 9%;
   --primary-foreground: 0 0% 100%;
   --secondary: 0 0% 96%;
-  --secondary-foreground: 0 0% 0%;
+  --secondary-foreground: 0 0% 9%;
   --muted: 0 0% 96%;
   --muted-foreground: 0 0% 45%;
   --accent: 0 0% 96%;
-  --accent-foreground: 0 0% 0%;
+  --accent-foreground: 0 0% 9%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
   --border: 0 0% 90%;
   --input: 0 0% 90%;
-  --ring: 0 0% 0%;
+  --ring: 0 0% 9%;
+  --surface: 0 0% 98%;
+  --surface-foreground: 0 0% 9%;
+  --muted-surface: 0 0% 97%;
 }
 
 .dark {
-  --background: 0 0% 0%;
-  --foreground: 0 0% 100%;
-  --card: 0 0% 5%;
-  --card-foreground: 0 0% 100%;
-  --popover: 0 0% 5%;
-  --popover-foreground: 0 0% 100%;
-  --primary: 0 0% 100%;
-  --primary-foreground: 0 0% 0%;
+  --background: 0 0% 5%;
+  --foreground: 0 0% 98%;
+  --card: 0 0% 8%;
+  --card-foreground: 0 0% 98%;
+  --popover: 0 0% 8%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 0 0% 5%;
   --secondary: 0 0% 15%;
-  --secondary-foreground: 0 0% 100%;
+  --secondary-foreground: 0 0% 98%;
   --muted: 0 0% 15%;
   --muted-foreground: 0 0% 65%;
   --accent: 0 0% 15%;
-  --accent-foreground: 0 0% 100%;
+  --accent-foreground: 0 0% 98%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
   --border: 0 0% 20%;
   --input: 0 0% 20%;
-  --ring: 0 0% 100%;
+  --ring: 0 0% 80%;
+  --surface: 0 0% 10%;
+  --surface-foreground: 0 0% 98%;
+  --muted-surface: 0 0% 12%;
 }
 
 @theme inline {
@@ -65,6 +71,9 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
+  --color-surface: hsl(var(--surface));
+  --color-surface-foreground: hsl(var(--surface-foreground));
+  --color-muted-surface: hsl(var(--muted-surface));
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -145,3 +154,100 @@
 
 .typing-dot:nth-child(1) { animation-delay: -0.32s; }
 .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+
+/* Noise texture overlay */
+.noise {
+  position: relative;
+}
+
+.noise::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  opacity: 0.03;
+  pointer-events: none;
+  z-index: 9999;
+  mix-blend-mode: overlay;
+}
+
+.dark .noise::before {
+  opacity: 0.05;
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, hsl(var(--foreground)) 0%, hsl(var(--foreground) / 0.7) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Gradient card */
+.gradient-card {
+  background: linear-gradient(
+    to bottom right,
+    hsl(var(--card)),
+    hsl(var(--muted) / 0.3)
+  );
+  position: relative;
+}
+
+.gradient-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    hsl(var(--border) / 0.5),
+    hsl(var(--border) / 0.1)
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Glow effect */
+.glow-primary {
+  box-shadow: 0 0 20px hsl(var(--primary) / 0.15),
+              0 0 40px hsl(var(--primary) / 0.08);
+}
+
+.glow-primary-sm {
+  box-shadow: 0 0 10px hsl(var(--primary) / 0.1);
+}
+
+/* Surface variants */
+.surface {
+  background-color: hsl(var(--surface));
+  color: hsl(var(--surface-foreground));
+}
+
+.surface-muted {
+  background-color: hsl(var(--muted-surface));
+}
+
+/* Subtle border with better visibility */
+.border-subtle {
+  border-color: hsl(var(--border));
+}
+
+.border-default {
+  border-color: hsl(var(--border));
+}
+
+/* Focus ring improvements */
+.focus-ring {
+  outline: none;
+  box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring));
+}
+
+/* Smooth transitions for theme switching */
+* {
+  transition-property: background-color, border-color, color, fill, stroke;
+  transition-timing-function: ease;
+  transition-duration: 150ms;
+}

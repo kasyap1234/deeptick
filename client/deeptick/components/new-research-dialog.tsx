@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, X, Loader2, TrendingUp, Building2, DollarSign, Globe } from "lucide-react";
+import { Sparkles, X, Loader2, TrendingUp, Building2, DollarSign, Globe, Cloud, Cpu, Zap, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { useGradient } from "@/lib/api";
 
 interface NewResearchDialogProps {
   open: boolean;
@@ -40,6 +41,7 @@ export function NewResearchDialog({
   const [context, setContext] = useState("");
   const [focusAreas, setFocusAreas] = useState<string[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const isGradient = useGradient;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,13 +60,56 @@ export function NewResearchDialog({
       <DialogContent className="sm:max-w-2xl gradient-card border-border/50">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl">
-            <Sparkles className="h-5 w-5 text-teal-500" />
-            New Research Query
+            {isGradient ? (
+              <>
+                <Cloud className="h-5 w-5 text-cyan-500" />
+                <span>Gradient AI Research</span>
+              </>
+            ) : (
+              <>
+                <Cpu className="h-5 w-5 text-violet-500" />
+                <span>Research Query</span>
+              </>
+            )}
           </DialogTitle>
-          <DialogDescription>
-            Ask any investment research question. Our AI will analyze market data, financials, and competitive landscape.
+          <DialogDescription className="flex items-center gap-2">
+            {isGradient ? (
+              <span className="flex items-center gap-1.5">
+                <Zap className="h-3 w-3 text-cyan-500" />
+                Powered by Gradient AI Platform with Knowledge Bases
+              </span>
+            ) : (
+              <span>Ask any investment research question using open source models.</span>
+            )}
           </DialogDescription>
         </DialogHeader>
+
+        {isGradient && (
+          <motion.div 
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="flex items-center gap-2 p-3 rounded-lg bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border border-cyan-500/20"
+          >
+            <div className="flex items-center gap-1.5">
+              <Database className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
+              <span className="text-xs font-medium text-cyan-700 dark:text-cyan-300">
+                Native Features
+              </span>
+            </div>
+            <div className="flex-1" />
+            <div className="flex items-center gap-1">
+              <Badge variant="outline" className="text-[10px] h-5 bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300">
+                Gradient Agents
+              </Badge>
+              <Badge variant="outline" className="text-[10px] h-5 bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300">
+                Knowledge Base
+              </Badge>
+              <Badge variant="outline" className="text-[10px] h-5 bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300">
+                RAG
+              </Badge>
+            </div>
+          </motion.div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-6 mt-4">
           <div className="space-y-2">

@@ -96,6 +96,9 @@ export interface ResearchMetadata {
     subagent: string;
     auditor: string;
   };
+  gradientAgentId?: string;
+  gradientKnowledgeBaseId?: string;
+  useGradientNative?: boolean;
 }
 
 export interface ResearchRequest {

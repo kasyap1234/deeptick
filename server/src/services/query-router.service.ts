@@ -2,6 +2,8 @@ import { db } from '../db/connection.js';
 import { researchJobs, type NewResearchJob } from '../db/schema.js';
 import { vectorStoreService } from './vector-store.service.js';
 import { embeddingService } from './embedding.service.js';
+import { gradientCacheService } from './gradient-cache.service.js';
+import { config } from '../config/index.js';
 import type { InstitutionalResearchReport, ResearchRequest } from '../types/research.types.js';
 import { logger } from '../utils/logger.js';
 
@@ -35,9 +37,53 @@ export class QueryRouterService {
 
   async routeQuery(request: ResearchRequest): Promise<QueryRouterResult> {
     const query = request.query.toLowerCase().trim();
+
+    if (config.isUsingGradient) {
+      try {
+        await gradientCacheService.initialize();
+        const gradientCacheResult = await gradientCacheService.checkCache(query);
+
+        if (gradientCacheResult.hit && gradientCacheResult.content) {
+          logger.info(`Gradient KB Cache hit: Query "${query}"`);
+          return {
+            shouldSearch: false,
+            cachedResult: {
+              executiveSummary: gradientCacheResult.content,
+              companySnapshot: '',
+              industryAndMarketStructure: '',
+              businessModelAndUnitEconomics: '',
+              financialQualityAndTrendAnalysis: '',
+              capitalAllocationReview: '',
+              valuationRelative: '',
+              valuationIntrinsic: '',
+              competitivePositionAndMoat: '',
+              managementGovernanceAssessment: '',
+              regulatoryAndLegalRisk: '',
+              bullCase: '',
+              bearCase: '',
+              scenarioFramework: [],
+              catalystCalendar: '',
+              portfolioConstructionView: '',
+              investmentConclusion: gradientCacheResult.content,
+              evidenceIndex: [],
+              auditReport: {
+                status: 'pass',
+                checkedClaims: 0,
+                unresolvedClaims: [],
+                notes: ['Retrieved from Gradient Knowledge Base cache'],
+              },
+              sources: [],
+            },
+            similarQueries: [],
+          };
+        }
+      } catch (error) {
+        logger.warn({ error }, 'Gradient cache check failed, falling back to local');
+      }
+    }
+
     const queryEmbedding = await embeddingService.embedQuery(query);
 
-    // First, check for exact or near-exact matches in vector DB
     const similarQueries = await vectorStoreService.findSimilarQueries(
       queryEmbedding,
       this.similarityThreshold
@@ -46,7 +92,6 @@ export class QueryRouterService {
     if (similarQueries.length > 0) {
       const bestMatch = similarQueries[0];
       
-      // If similarity is very high, return cached result
       if (bestMatch.similarity >= this.similarityThreshold && bestMatch.result) {
         logger.info(`Cache hit: Query "${query}" matched with similarity ${bestMatch.similarity}`);
         return {
@@ -61,7 +106,6 @@ export class QueryRouterService {
         };
       }
 
-      // If partial match, still return it but indicate we might want fresh data
       if (bestMatch.similarity >= this.partialMatchThreshold) {
         logger.info(`Partial cache hit: Query "${query}" matched with similarity ${bestMatch.similarity}`);
         return {
@@ -77,7 +121,6 @@ export class QueryRouterService {
       }
     }
 
-    // No good match found, need to do fresh research
     return {
       shouldSearch: true,
       similarQueries: similarQueries.map((sq) => ({

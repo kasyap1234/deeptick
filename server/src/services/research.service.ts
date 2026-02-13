@@ -14,6 +14,8 @@ import { db } from '../db/connection.js';
 import { researchJobs, sources as sourceTable } from '../db/schema.js';
 import { embeddingService } from './embedding.service.js';
 import { vectorStoreService } from './vector-store.service.js';
+import { gradientCacheService } from './gradient-cache.service.js';
+import { config } from '../config/index.js';
 import { createResearchAgent } from './deep-research/agent-factory.js';
 
 type FileDataLike = { content: string[] } | string | null | undefined;
@@ -215,6 +217,19 @@ export class ResearchService {
       });
 
       await this.storeInVectorDB(job);
+
+      if (config.isUsingGradient && report.investmentConclusion) {
+        try {
+          const sources = report.sources?.map(s => s.url).filter(Boolean) || [];
+          await gradientCacheService.addToCache(
+            job.query,
+            report.investmentConclusion,
+            sources
+          );
+        } catch (cacheError) {
+          logger.warn({ error: cacheError }, 'Failed to add result to Gradient cache');
+        }
+      }
     } catch (error) {
       job.status = 'failed';
       job.error = error instanceof Error ? error.message : 'Unknown error';

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -9,13 +9,13 @@ import {
   Plus,
   Search,
   ChevronRight,
-  Sun,
-  Moon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { GradientToggle } from "@/components/gradient-toggle";
 
 interface NavItem {
   icon: React.ReactNode;
@@ -35,53 +35,6 @@ const mainNavItems: NavItem[] = [
   { icon: <MessageSquare className="h-4 w-4" />, label: "Chat", href: "/chat" },
 ];
 
-function ThemeToggleButton() {
-  const [mounted, setMounted] = useState(false);
-  const [isDark, setIsDark] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-    const checkDark = () => document.documentElement.classList.contains("dark");
-    setIsDark(checkDark());
-    
-    const observer = new MutationObserver(() => {
-      setIsDark(checkDark());
-    });
-    
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-    
-    return () => observer.disconnect();
-  }, []);
-
-  const toggleTheme = () => {
-    const html = document.documentElement;
-    if (html.classList.contains("dark")) {
-      html.classList.remove("dark");
-      localStorage.setItem("deeptick-theme", "light");
-    } else {
-      html.classList.add("dark");
-      localStorage.setItem("deeptick-theme", "dark");
-    }
-  };
-
-  if (!mounted) {
-    return <div className="w-9 h-9 rounded-md border border-border" />;
-  }
-
-  return (
-    <button
-      onClick={toggleTheme}
-      className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-border bg-background hover:bg-accent transition-colors"
-      aria-label="Toggle theme"
-    >
-      {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-    </button>
-  );
-}
-
 export function Sidebar({
   className,
   activeTab = "research",
@@ -96,26 +49,26 @@ export function Sidebar({
       animate={{ x: 0, opacity: 1 }}
       transition={{ duration: 0.2 }}
       className={cn(
-        "flex h-screen flex-col border-r border-border bg-background",
+        "flex h-screen flex-col border-r border-border/50 bg-background/80 backdrop-blur-sm",
         className
       )}
     >
-      <div className="flex h-14 items-center justify-between px-4 border-b border-border">
-        <Link href="/" className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded border border-foreground bg-foreground">
-            <Brain className="h-3.5 w-3.5 text-background" />
+      <div className="flex h-14 items-center justify-between px-4 border-b border-border/50">
+        <Link href="/" className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-foreground to-foreground/80 shadow-sm">
+            <Brain className="h-4 w-4 text-background" />
           </div>
           <span className={cn("font-semibold text-sm tracking-tight", isCollapsed && "hidden")}>
             DeepTick
           </span>
         </Link>
-        <ThemeToggleButton />
+        <ThemeToggle />
       </div>
 
       <div className="p-3">
         <Button
           onClick={onNewResearch}
-          className="w-full gap-2 bg-foreground text-background hover:bg-foreground/90"
+          className="w-full gap-2 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
         >
           <Plus className="h-4 w-4" />
           {!isCollapsed && "New Research"}
@@ -123,13 +76,13 @@ export function Sidebar({
       </div>
 
       <ScrollArea className="flex-1 px-3">
-        <nav className="flex flex-col gap-0.5">
+        <nav className="flex flex-col gap-1">
           {mainNavItems.map((item) => (
             <Link key={item.label} href={item.href}>
               <Button
                 variant={activeTab === item.label.toLowerCase() ? "secondary" : "ghost"}
                 className={cn(
-                  "w-full justify-start gap-2 h-9 text-sm",
+                  "w-full justify-start gap-2.5 h-10 text-sm font-medium",
                   activeTab === item.label.toLowerCase() &&
                     "bg-secondary text-foreground"
                 )}
@@ -159,11 +112,11 @@ export function Sidebar({
                 <Link key={conv.id} href={`/chat/${conv.id}`}>
                   <Button
                     variant="ghost"
-                    className="w-full justify-start gap-2 h-8 text-xs text-muted-foreground hover:text-foreground"
+                    className="w-full justify-start gap-2 h-8 text-xs text-muted-foreground hover:text-foreground group"
                   >
                     <MessageSquare className="h-3 w-3 shrink-0" />
                     <span className="truncate flex-1 text-left">{conv.title}</span>
-                    <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-100" />
+                    <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                   </Button>
                 </Link>
               ))}
@@ -172,7 +125,8 @@ export function Sidebar({
         )}
       </ScrollArea>
 
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border/50 p-3">
+        <GradientToggle className="mb-3" />
         <p className="text-[10px] text-muted-foreground text-center">
           DeepTick Research
         </p>

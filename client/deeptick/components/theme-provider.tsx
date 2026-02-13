@@ -57,12 +57,14 @@ export function ThemeProvider({
     setThemeState(newTheme);
   };
 
-  if (!mounted) {
-    return <>{children}</>;
-  }
+  const value = {
+    theme: mounted ? theme : defaultTheme,
+    setTheme,
+    resolvedTheme: mounted ? resolvedTheme : "light",
+  };
 
   return (
-    <ThemeProviderContext.Provider value={{ theme, setTheme, resolvedTheme }}>
+    <ThemeProviderContext.Provider value={value}>
       {children}
     </ThemeProviderContext.Provider>
   );

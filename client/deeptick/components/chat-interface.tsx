@@ -42,34 +42,34 @@ function ChatMessage({ message, isStreaming }: ChatMessageProps) {
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className={cn("flex gap-3 p-4", isUser ? "flex-row-reverse" : "flex-row")}
+      className={cn("flex gap-3 px-4 py-2", isUser ? "flex-row-reverse" : "flex-row")}
     >
-      <Avatar className={cn("h-8 w-8 shrink-0", isUser ? "bg-primary" : "bg-secondary")}>
-        <AvatarFallback className={isUser ? "bg-primary text-primary-foreground" : "bg-gradient-to-br from-teal-500 to-cyan-500"}>
-          {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4 text-white" />}
+      <Avatar className={cn("h-8 w-8 shrink-0 mt-1", isUser ? "bg-primary" : "bg-secondary")}>
+        <AvatarFallback className={isUser ? "bg-primary text-primary-foreground" : "bg-gradient-to-br from-cyan-500 to-teal-500 text-white"}>
+          {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
         </AvatarFallback>
       </Avatar>
 
       <div className={cn("flex flex-col gap-1 max-w-[80%]", isUser ? "items-end" : "items-start")}>
         <div
           className={cn(
-            "rounded-2xl px-4 py-3 text-sm",
+            "rounded-2xl px-4 py-3 text-sm shadow-sm",
             isUser
-              ? "bg-primary text-primary-foreground rounded-br-sm"
-              : "bg-card border border-border/50 rounded-bl-sm"
+              ? "bg-primary text-primary-foreground rounded-br-md"
+              : "bg-card border border-border/50 rounded-bl-md"
           )}
         >
           {isUser ? (
             <p>{message.content}</p>
           ) : (
-            <div className="prose prose-invert prose-sm max-w-none">
+            <div className="prose prose-sm dark:prose-invert max-w-none">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {message.content}
               </ReactMarkdown>
             </div>
           )}
           {isStreaming && !isUser && (
-            <span className="inline-flex gap-1 ml-1">
+            <span className="inline-flex gap-1 ml-1 mt-1">
               <span className="typing-dot w-1.5 h-1.5 bg-current rounded-full" />
               <span className="typing-dot w-1.5 h-1.5 bg-current rounded-full" />
               <span className="typing-dot w-1.5 h-1.5 bg-current rounded-full" />
@@ -93,7 +93,7 @@ function ChatMessage({ message, isStreaming }: ChatMessageProps) {
           </div>
         )}
 
-        <span className="text-[10px] text-muted-foreground">
+        <span className="text-[10px] text-muted-foreground px-1">
           {new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </span>
       </div>
@@ -282,7 +282,7 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-background/80 backdrop-blur-sm">
         <div className="flex items-center gap-3">
           {onBack && (
             <Button variant="ghost" size="icon" onClick={onBack} className="lg:hidden">
@@ -303,7 +303,9 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
 
         <DropdownMenu>
           <DropdownMenuTrigger>
-            <MoreVertical className="h-4 w-4" />
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <MoreVertical className="h-4 w-4" />
+            </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={handleDelete} className="text-destructive">
@@ -340,7 +342,7 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
         </div>
       </ScrollArea>
 
-      <div className="p-4 border-t border-border/50">
+      <div className="p-4 border-t border-border/50 bg-background/80 backdrop-blur-sm">
         <div className="flex items-end gap-2">
           <div className="flex-1 relative">
             <Input
@@ -349,7 +351,7 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Ask about your research..."
-              className="min-h-[44px] pr-12"
+              className="min-h-[44px] pr-12 bg-background/50"
               disabled={isLoading}
             />
             <Button
@@ -377,7 +379,7 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
 function ChatWelcome() {
   return (
     <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-cyan-500 flex items-center justify-center mb-4">
+      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center mb-4 shadow-lg shadow-cyan-500/20">
         <Sparkles className="h-8 w-8 text-white" />
       </div>
       <h3 className="text-lg font-semibold mb-2">How can I help you?</h3>
@@ -391,8 +393,8 @@ function ChatWelcome() {
 function ChatEmptyState() {
   return (
     <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-      <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-teal-500/20 to-cyan-500/20 flex items-center justify-center mb-6">
-        <Bot className="h-10 w-10 text-primary" />
+      <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-cyan-500/10 to-teal-500/10 flex items-center justify-center mb-6 border border-border">
+        <Bot className="h-10 w-10 text-foreground/80" />
       </div>
       <h2 className="text-2xl font-bold mb-2 gradient-text">Start a Conversation</h2>
       <p className="text-muted-foreground max-w-md mb-6">

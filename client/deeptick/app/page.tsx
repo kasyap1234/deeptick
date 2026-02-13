@@ -18,7 +18,7 @@ import { ResearchCard } from "@/components/research-card";
 import { ResearchReportView } from "@/components/research-report";
 import { NewResearchDialog } from "@/components/new-research-dialog";
 import { EmptyState } from "@/components/empty-state";
-import { api } from "@/lib/api";
+import { api, useGradient } from "@/lib/api";
 import type { ResearchJob } from "@/lib/types";
 
 export default function Home() {
@@ -154,6 +154,8 @@ export default function Home() {
     failed: jobs.filter((j) => j.status === "failed").length,
   };
 
+  const isGradient = useGradient;
+
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar
@@ -170,11 +172,25 @@ export default function Home() {
           )}
         >
           <div className="flex h-16 items-center justify-between px-6 border-b border-border/50">
-            <div>
-              <h1 className="text-lg font-semibold">Research History</h1>
-              <p className="text-xs text-muted-foreground">
-                {jobs.length} research{jobs.length !== 1 ? "es" : ""}
-              </p>
+            <div className="flex items-center gap-3">
+              <div>
+                <h1 className="text-lg font-semibold">Research History</h1>
+                <p className="text-xs text-muted-foreground">
+                  {jobs.length} research{jobs.length !== 1 ? "es" : ""}
+                </p>
+              </div>
+              {isGradient && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border border-cyan-500/20"
+                >
+                  <div className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-pulse" />
+                  <span className="text-[10px] font-medium text-cyan-600 dark:text-cyan-400">
+                    Gradient
+                  </span>
+                </motion.div>
+              )}
             </div>
             <Button
               variant="outline"
