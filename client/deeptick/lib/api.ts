@@ -21,6 +21,7 @@ class ApiClient {
   private async fetch<T>(endpoint: string, options?: RequestInit): Promise<T> {
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       ...options,
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...options?.headers,
@@ -103,6 +104,31 @@ class ApiClient {
   connectChatWebSocket(conversationId: string): WebSocket {
     const wsUrl = this.baseUrl.replace(/^http/, 'ws');
     return new WebSocket(`${wsUrl}/ws/chat/${conversationId}`);
+  }
+
+  // Auth endpoints
+  async signUp(email: string, password: string, name?: string) {
+    return this.fetch<{ success: boolean; data: { user: any; session: any } }>('/api/auth/sign-up', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, name }),
+    });
+  }
+
+  async signIn(email: string, password: string) {
+    return this.fetch<{ success: boolean; data: { user: any; session: any } }>('/api/auth/sign-in', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+  }
+
+  async signOut() {
+    return this.fetch<{ success: boolean }>('/api/auth/sign-out', {
+      method: 'POST',
+    });
+  }
+
+  async getSession() {
+    return this.fetch<{ success: boolean; data?: { user: any } }>('/api/auth/session');
   }
 
   // Gradient-specific endpoints

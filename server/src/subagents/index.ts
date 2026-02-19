@@ -12,12 +12,12 @@ type SubAgentSpec = {
 };
 
 function buildSubagent(spec: SubAgentSpec): SubAgent {
-  const tools = spec.useSimilarityTool ? [exaSearchTool, exaFindSimilarTool] : [exaSearchTool];
+  const tools = (spec.useSimilarityTool ? [exaSearchTool, exaFindSimilarTool] : [exaSearchTool]) as any;
 
   return {
     name: spec.name,
     description: spec.description,
-    model: spec.model ?? config.DEEP_RESEARCH_SUBAGENT_MODEL,
+    model: spec.model ?? config.deepResearch.subagentModel,
     tools,
     systemPrompt: `You are ${spec.name}, a specialist in institutional equity research.
 
@@ -33,7 +33,7 @@ ${spec.focus.map((item) => `- ${item}`).join('\n')}
 OUTPUT:
 - Write your findings to ${spec.outputFile}
 - Include: key findings, quantified evidence, uncertainties, and a source list.`,
-  };
+  } as SubAgent;
 }
 
 const subagentSpecs: SubAgentSpec[] = [
@@ -143,11 +143,44 @@ const subagentSpecs: SubAgentSpec[] = [
     useSimilarityTool: true,
   },
   {
+    name: 'india-fii-dii-agent',
+    description: 'Analyzes Foreign Institutional Investor (FII) and Domestic Institutional Investor (DII) flows.',
+    focus: ['FII buying/selling patterns', 'DII activity and trends', 'Net investment flows by category', 'Impact on stock movements'],
+    outputFile: 'subagents/india_fii_dii.md',
+    useSimilarityTool: true,
+  },
+  {
+    name: 'india-promoter-holdings-agent',
+    description: 'Tracks promoter holdings, pledges, and stakeholder changes.',
+    focus: ['Promoter shareholding percentage', 'Pledge status changes', 'Stakeholder activism', 'Related party transactions'],
+    outputFile: 'subagents/india_promoter_holdings.md',
+  },
+  {
+    name: 'india-sector-analysis-agent',
+    description: 'Analyzes sector performance, rotation, and thematic trends in Indian market.',
+    focus: ['Sector performance vs NIFTY', 'Sector rotation trends', 'Thematic opportunities', 'Sector correlations'],
+    outputFile: 'subagents/india_sector_analysis.md',
+    useSimilarityTool: true,
+  },
+  {
+    name: 'india-macro-indicator-agent',
+    description: 'Tracks Indian macro indicators: GDP, inflation, RBI policy, currency, commodities.',
+    focus: ['GDP growth trends', 'Inflation (CPI/WPI)', 'RBI monetary policy', 'USD/INR currency', 'Commodity impact'],
+    outputFile: 'subagents/india_macro_indicators.md',
+    useSimilarityTool: true,
+  },
+  {
+    name: 'india-stock-screen-agent',
+    description: 'Screens Indian stocks using fundamental metrics (P/E, ROE, debt, growth).',
+    focus: ['Valuation metrics (P/E, P/B, EV/EBITDA)', 'Return ratios (ROE, ROCE)', 'Debt levels and coverage', 'Growth rates'],
+    outputFile: 'subagents/india_stock_screen.md',
+  },
+  {
     name: 'compliance-auditor-agent',
     description: 'Audits final claims for citation sufficiency and consistency.',
     focus: ['Numerical claim verification', 'Citation sufficiency', 'Unresolved contradiction list'],
     outputFile: 'subagents/compliance_audit.md',
-    model: config.DEEP_RESEARCH_AUDITOR_MODEL,
+  model: config.deepResearch.auditorModel,
   },
 ];
 

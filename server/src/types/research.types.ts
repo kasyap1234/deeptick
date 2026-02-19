@@ -67,6 +67,7 @@ export type InstitutionalResearchReport = Static<typeof InstitutionalResearchRep
 
 export interface ResearchJob {
   id: string;
+  userId: string;
   query: string;
   status: ResearchStatus;
   createdAt: Date;
@@ -102,6 +103,7 @@ export interface ResearchMetadata {
 }
 
 export interface ResearchRequest {
+  userId?: string;
   query: string;
   context?: string;
   focusAreas?: string[];

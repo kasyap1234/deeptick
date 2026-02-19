@@ -98,7 +98,7 @@ export class GradientAgentService {
       throw new Error(`Failed to create agent: ${response.status} - ${error}`);
     }
 
-    const data: GradientAgentResponse = await response.json();
+    const data = (await response.json()) as GradientAgentResponse;
     logger.info({ agentId: data.agent.id }, 'Gradient Agent created successfully');
     return data.agent;
   }
@@ -114,7 +114,7 @@ export class GradientAgentService {
       throw new Error(`Failed to get agent: ${response.status} - ${error}`);
     }
 
-    const data: GradientAgentResponse = await response.json();
+    const data = (await response.json()) as GradientAgentResponse;
     return data.agent;
   }
 
@@ -136,7 +136,7 @@ export class GradientAgentService {
       throw new Error(`Failed to list agents: ${response.status} - ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as { agents?: GradientAgent[] };
     return data.agents || [];
   }
 
@@ -190,10 +190,13 @@ export class GradientAgentService {
       throw new Error(`Failed to invoke agent: ${response.status} - ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as Record<string, unknown>;
     return {
-      response: data.response || data.choices?.[0]?.message?.content || '',
-      sessionId: data.session_id,
+      response:
+        (typeof data.response === 'string' ? data.response : undefined) ||
+        ((data.choices as any)?.[0]?.message?.content as string | undefined) ||
+        '',
+      sessionId: typeof data.session_id === 'string' ? data.session_id : undefined,
     };
   }
 
@@ -236,13 +239,13 @@ export class GradientAgentService {
       throw new Error(`Failed to invoke agent with retrieval: ${response.status} - ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as Record<string, unknown>;
     return {
-      response: data.choices?.[0]?.message?.content || '',
-      sessionId: data.session_id,
-      retrieval: data.retrieval,
-      functions: data.functions,
-      guardrails: data.guardrails,
+      response: ((data.choices as any)?.[0]?.message?.content as string | undefined) || '',
+      sessionId: typeof data.session_id === 'string' ? data.session_id : undefined,
+      retrieval: data.retrieval as RetrievalInfo | undefined,
+      functions: data.functions as { called_functions: string[] } | undefined,
+      guardrails: data.guardrails as { triggered_guardrails: Array<{ rule_name: string; message: string }> } | undefined,
     };
   }
 
@@ -340,11 +343,11 @@ export class GradientAgentService {
       return agent;
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as Record<string, unknown>;
     return {
       ...agent,
-      endpoint: data.agent?.endpoint,
-      accessKey: data.agent?.access_key || data.agent?.accessKey,
+      endpoint: (data as any).agent?.endpoint,
+      accessKey: (data as any).agent?.access_key || (data as any).agent?.accessKey,
     };
   }
 

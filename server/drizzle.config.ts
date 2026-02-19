@@ -1,12 +1,18 @@
 import type { Config } from 'drizzle-kit';
+import { defineConfig } from 'drizzle-kit';
 
-export default {
-  schema: './src/db/schema.ts',
+const dbUrl = process.env.DATABASE_URL || '';
+const dbUrlWithSsl = dbUrl.includes('sslmode') 
+  ? dbUrl 
+  : `${dbUrl}?sslmode=require`;
+
+export default defineConfig({
+  schema: ['./src/db/schema.ts', './src/auth-schema.ts'],
   out: './drizzle',
   dialect: 'postgresql',
   dbCredentials: {
-    url: process.env.DATABASE_URL!,
+    url: dbUrlWithSsl,
   },
   verbose: true,
   strict: true,
-} satisfies Config;
+});

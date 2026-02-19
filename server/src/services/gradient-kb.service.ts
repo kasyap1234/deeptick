@@ -104,7 +104,7 @@ export class GradientKnowledgeBaseService {
       throw new Error(`Failed to create knowledge base: ${response.status} - ${error}`);
     }
 
-    const data: KnowledgeBaseResponse = await response.json();
+    const data = (await response.json()) as KnowledgeBaseResponse;
     logger.info({ kbId: data.knowledge_base.id }, 'Gradient Knowledge Base created successfully');
     return data.knowledge_base;
   }
@@ -120,7 +120,7 @@ export class GradientKnowledgeBaseService {
       throw new Error(`Failed to get knowledge base: ${response.status} - ${error}`);
     }
 
-    const data: KnowledgeBaseResponse = await response.json();
+    const data = (await response.json()) as KnowledgeBaseResponse;
     return data.knowledge_base;
   }
 
@@ -142,7 +142,7 @@ export class GradientKnowledgeBaseService {
       throw new Error(`Failed to list knowledge bases: ${response.status} - ${error}`);
     }
 
-    const data: ListKnowledgeBasesResponse = await response.json();
+    const data = (await response.json()) as ListKnowledgeBasesResponse;
     return data.knowledge_bases || [];
   }
 
@@ -195,6 +195,124 @@ export class GradientKnowledgeBaseService {
     logger.info({ kbId }, 'Knowledge base indexing initiated');
   }
 
+  async createKnowledgeBaseWithAutoIndexing(kbConfig: KnowledgeBaseConfig & { 
+    autoIndex?: boolean; 
+    indexSchedule?: 'hourly' | 'daily' | 'weekly';
+  }): Promise<KnowledgeBase> {
+    const { name, embeddingModelUrn, dataSources, description, autoIndex, indexSchedule } = kbConfig;
+
+    if (!config.gradient.projectId) {
+      throw new Error('GRADIENT_PROJECT_ID is required to create knowledge bases');
+    }
+
+    const payload: Record<string, unknown> = {
+      name,
+      embedding_model_urn: embeddingModelUrn || config.gradient.kbEmbeddingModelUrn,
+      project_id: config.gradient.projectId,
+      region: config.gradient.region || 'tor1',
+      auto_index: autoIndex ?? true,
+    };
+
+    if (indexSchedule) {
+      payload.index_schedule = indexSchedule;
+    }
+
+    if (dataSources && dataSources.length > 0) {
+      payload.data_sources = dataSources;
+    }
+
+    if (description) {
+      payload.description = description;
+    }
+
+    logger.info({ kbName: name, autoIndex, indexSchedule }, 'Creating Gradient Knowledge Base with auto-indexing');
+
+    const response = await fetch(`${this.baseUrl}/${this.apiVersion}/gen-ai/knowledge_bases`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      logger.error({ status: response.status, error }, 'Failed to create Gradient Knowledge Base with auto-indexing');
+      throw new Error(`Failed to create knowledge base: ${response.status} - ${error}`);
+    }
+
+    const data = (await response.json()) as KnowledgeBaseResponse;
+    logger.info({ kbId: data.knowledge_base.id }, 'Gradient Knowledge Base with auto-indexing created successfully');
+    return data.knowledge_base;
+  }
+
+  async addDataSourceWithAutoReindex(kbId: string, dataSource: DataSource): Promise<void> {
+    const response = await fetch(
+      `${this.baseUrl}/${this.apiVersion}/gen-ai/knowledge_bases/${kbId}/data_sources`,
+      {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(dataSource),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to add data source: ${response.status} - ${error}`);
+    }
+
+    logger.info({ kbId, sourceName: dataSource.name }, 'Data source added to knowledge base - auto-reindex triggered');
+
+    await this.indexKnowledgeBase(kbId);
+  }
+
+  async addResearchReportAsSource(kbId: string, reportContent: string, metadata: Record<string, unknown>): Promise<void> {
+    const reportJson = JSON.stringify({
+      content: reportContent,
+      metadata,
+      generatedAt: new Date().toISOString(),
+    });
+
+    const dataSource: DataSource = {
+      name: `research_report_${Date.now()}`,
+      type: 'file_url',
+      url: `data:application/json;base64,${Buffer.from(reportJson).toString('base64')}`,
+    };
+
+    await this.addDataSourceWithAutoReindex(kbId, dataSource);
+  }
+
+  async searchKnowledgeBase(kbId: string, query: string, limit = 5): Promise<Array<{ content: string; score: number; metadata?: Record<string, unknown> }>> {
+    const response = await fetch(
+      `${this.baseUrl}/${this.apiVersion}/gen-ai/knowledge_bases/${kbId}/search`,
+      {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          query,
+          num_results: limit,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to search knowledge base: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json() as {
+      results: Array<{
+        page_content: string;
+        score: number;
+        metadata?: Record<string, unknown>;
+      }>;
+    };
+
+    return data.results.map(r => ({
+      content: r.page_content,
+      score: r.score,
+      metadata: r.metadata,
+    }));
+  }
+
   async waitForReady(kbId: string, maxAttempts = 30, intervalMs = 5000): Promise<KnowledgeBase> {
     let attempts = 0;
 
@@ -215,25 +333,6 @@ export class GradientKnowledgeBaseService {
     }
 
     throw new Error(`Knowledge base did not become ready within ${maxAttempts * intervalMs}ms`);
-  }
-
-  async searchKnowledgeBase(kbId: string, query: string, limit = 5): Promise<SearchResult[]> {
-    const response = await fetch(
-      `${this.baseUrl}/${this.apiVersion}/gen-ai/knowledge_bases/${kbId}/search`,
-      {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify({ query, limit }),
-      }
-    );
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Failed to search knowledge base: ${response.status} - ${error}`);
-    }
-
-    const data = await response.json();
-    return data.results || [];
   }
 }
 

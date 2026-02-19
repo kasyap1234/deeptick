@@ -10,13 +10,15 @@ import {
   type WebSocketLike,
   isInstitutionalResearchReport,
 } from '../types/research.types.js';
-import { db } from '../db/connection.js';
+import { getDb } from '../db/connection.js';
 import { researchJobs, sources as sourceTable } from '../db/schema.js';
-import { embeddingService } from './embedding.service.js';
-import { vectorStoreService } from './vector-store.service.js';
 import { gradientCacheService } from './gradient-cache.service.js';
+import { semanticPromptCache } from './prompt-cache.service.js';
+import { reportIndexerService } from './report-indexer.service.js';
 import { config } from '../config/index.js';
 import { createResearchAgent } from './deep-research/agent-factory.js';
+import { guardrailsService } from './guardrails.service.js';
+import { logger } from '../utils/logger.js';
 
 type FileDataLike = { content: string[] } | string | null | undefined;
 
@@ -31,18 +33,6 @@ const MINIMUM_SOURCE_TARGETS = {
   domains: 12,
   recentSources: 25,
 };
-const MAX_SECTION_CHARS = 5000;
-const MAX_FILE_CHARS = 2500;
-const MAX_SOURCE_CHARS = 1000;
-
-function chunkText(content: string, maxChars: number): string[] {
-  if (content.length <= maxChars) return [content];
-  const chunks: string[] = [];
-  for (let i = 0; i < content.length; i += maxChars) {
-    chunks.push(content.slice(i, i + maxChars));
-  }
-  return chunks;
-}
 
 function getFileContent(file: FileDataLike): string | undefined {
   if (!file) return undefined;
@@ -76,14 +66,44 @@ function isRecentDate(value?: string): boolean {
   return parsed >= ninetyDaysAgo;
 }
 
+function formatGuardrailError(triggered: Array<{ message: string }>): string {
+  if (triggered.length === 0) {
+    return 'Request blocked by guardrails policy.';
+  }
+
+  return `Request blocked by guardrails policy: ${triggered.map((rule) => rule.message).join('; ')}`;
+}
+
 export class ResearchService {
   private jobs: Map<string, ResearchJob> = new Map();
   private wsConnections: Map<string, Set<WebSocketLike>> = new Map();
 
+  private async updateJobStatus(
+    jobId: string,
+    status: 'pending' | 'in_progress' | 'completed' | 'failed',
+    result?: unknown,
+    error?: string,
+    metadata?: Record<string, unknown>
+  ): Promise<void> {
+    const db = getDb();
+    await db
+      .update(researchJobs)
+      .set({
+        status,
+        result: result ?? null,
+        error: error ?? null,
+        metadata: metadata ?? {},
+        updatedAt: new Date(),
+      })
+      .where(eq(researchJobs.id, jobId));
+  }
+
   async createResearchJob(request: ResearchRequest): Promise<ResearchJob> {
     const id = crypto.randomUUID();
+    const userId = request.userId ?? 'websocket-anonymous';
     const job: ResearchJob = {
       id,
+      userId,
       query: request.query,
       status: 'pending',
       createdAt: new Date(),
@@ -92,18 +112,58 @@ export class ResearchService {
 
     this.jobs.set(id, job);
 
-    this.executeResearch(id, request).catch((error) => {
-      job.status = 'failed';
-      job.error = error instanceof Error ? error.message : 'Unknown error';
-      job.updatedAt = new Date();
-
-      this.broadcastToJob(id, {
-        type: 'error',
-        jobId: id,
-        payload: { error: job.error },
-        timestamp: new Date(),
-      });
+    const db = getDb();
+    await db.insert(researchJobs).values({
+      id: job.id,
+      userId: job.userId,
+      query: job.query,
+      status: job.status,
+      result: null,
+      metadata: {},
+      error: null,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
     });
+
+    this.executeResearch(id, request)
+      .then(() => logger.info({ jobId: id }, 'Research completed successfully'))
+      .catch((error) => {
+        logger.error({ jobId: id, error }, 'Research failed');
+        job.status = 'failed';
+        job.error = error instanceof Error ? error.message : 'Unknown error';
+        job.updatedAt = new Date();
+
+        this.updateJobStatus(id, 'failed', undefined, job.error).catch(dbErr => {
+          logger.error({ jobId: id, error: dbErr }, 'Failed to update job status in DB');
+        });
+
+        this.broadcastToJob(id, {
+          type: 'error',
+          jobId: id,
+          payload: { error: job.error },
+          timestamp: new Date(),
+        });
+      });
+
+    const timeoutMs = 300000; // 5 minutes for complex research
+    setTimeout(() => {
+      if (job.status === 'in_progress' || job.status === 'pending') {
+        job.status = 'failed';
+        job.error = 'Research timed out after 2 minutes. Please check your LLM API key and ensure the service is accessible.';
+        job.updatedAt = new Date();
+
+        this.updateJobStatus(id, 'failed', undefined, job.error).catch(dbErr => {
+          logger.error({ jobId: id, error: dbErr }, 'Failed to update job status in DB');
+        });
+
+        this.broadcastToJob(id, {
+          type: 'error',
+          jobId: id,
+          payload: { error: job.error },
+          timestamp: new Date(),
+        });
+      }
+    }, timeoutMs);
 
     return job;
   }
@@ -121,11 +181,83 @@ export class ResearchService {
   }
 
   private async executeResearch(jobId: string, request: ResearchRequest): Promise<void> {
+    logger.info({ jobId, query: request.query }, 'Starting research execution');
+    
     const job = this.jobs.get(jobId);
-    if (!job) return;
+    if (!job) {
+      logger.error({ jobId }, 'Job not found in memory');
+      return;
+    }
+
+    const guardrailsInput = [
+      `Query: ${request.query}`,
+      request.context ? `Context: ${request.context}` : undefined,
+      request.focusAreas?.length ? `Focus Areas: ${request.focusAreas.join(', ')}` : undefined,
+    ].filter(Boolean).join('\n');
+
+    const inputGuardrailResult = await guardrailsService.checkContent(guardrailsInput);
+    if (!inputGuardrailResult.passed) {
+      const guardrailError = formatGuardrailError(inputGuardrailResult.triggered);
+      job.status = 'failed';
+      job.error = guardrailError;
+      job.updatedAt = new Date();
+
+      await this.updateJobStatus(jobId, 'failed', undefined, guardrailError);
+
+      this.broadcastToJob(jobId, {
+        type: 'error',
+        jobId,
+        payload: {
+          error: guardrailError,
+          guardrails: inputGuardrailResult.triggered,
+        },
+        timestamp: new Date(),
+      });
+
+      return;
+    }
+
+    const cachedResult = await semanticPromptCache.searchCache({
+      userId: job.userId,
+      query: request.query,
+      context: request.context ? { query: request.context } : undefined,
+      focusAreas: request.focusAreas,
+      similarityThreshold: 0.85,
+    });
+
+    if (cachedResult) {
+      logger.info({ jobId, similarity: cachedResult.similarity }, 'Returning cached result');
+      
+      job.result = cachedResult.responseText;
+      job.status = 'completed';
+      job.metadata = {
+        cached: true,
+        cacheId: cachedResult.id,
+        similarity: cachedResult.similarity,
+      };
+      job.updatedAt = new Date();
+
+      await this.updateJobStatus(jobId, 'completed', cachedResult.responseText, undefined, job.metadata as Record<string, unknown>);
+
+      this.broadcastToJob(jobId, {
+        type: 'result',
+        jobId,
+        payload: { 
+          result: cachedResult.responseText, 
+          metadata: job.metadata,
+          cached: true,
+        },
+        timestamp: new Date(),
+      });
+
+      return;
+    }
 
     job.status = 'in_progress';
     job.updatedAt = new Date();
+    logger.info({ jobId }, 'Job status set to in_progress');
+
+    await this.updateJobStatus(jobId, 'in_progress');
 
     this.broadcastToJob(jobId, {
       type: 'status',
@@ -139,7 +271,7 @@ export class ResearchService {
     const startTime = Date.now();
 
     try {
-      const { agent, artifactRoot, modelConfig } = await createResearchAgent(jobId);
+      const { agent, artifactRoot, modelConfig } = await createResearchAgent(jobId, guardrailsInput);
 
       this.broadcastStage(jobId, 'delegating', {
         expectedSubagents: 18,
@@ -171,6 +303,33 @@ export class ResearchService {
         fallbackSummary: result.messages[result.messages.length - 1]?.content,
         sources,
       });
+
+      const outputGuardrailResult = await guardrailsService.checkContent('', JSON.stringify(report));
+      if (!outputGuardrailResult.passed) {
+        const guardrailError = formatGuardrailError(outputGuardrailResult.triggered);
+        job.status = 'failed';
+        job.error = guardrailError;
+        job.updatedAt = new Date();
+
+        await this.updateJobStatus(jobId, 'failed', undefined, guardrailError, {
+          guardrails: {
+            stage: 'output',
+            triggered: outputGuardrailResult.triggered,
+          },
+        });
+
+        this.broadcastToJob(jobId, {
+          type: 'error',
+          jobId,
+          payload: {
+            error: guardrailError,
+            guardrails: outputGuardrailResult.triggered,
+          },
+          timestamp: new Date(),
+        });
+
+        return;
+      }
 
       this.broadcastStage(jobId, 'auditing');
 
@@ -204,6 +363,8 @@ export class ResearchService {
       };
       job.updatedAt = new Date();
 
+      await this.updateJobStatus(jobId, 'completed', report, undefined, job.metadata as Record<string, unknown>);
+
       this.broadcastStage(jobId, 'finalizing', {
         uniqueSources: sourceMetrics.uniqueSources,
         domainCount: sourceMetrics.domainCount,
@@ -217,6 +378,32 @@ export class ResearchService {
       });
 
       await this.storeInVectorDB(job);
+
+      try {
+        await reportIndexerService.indexReport({
+          jobId: job.id,
+          userId: job.userId,
+        });
+      } catch (indexError) {
+        logger.warn({ error: indexError }, 'Failed to index report');
+      }
+
+      try {
+        await semanticPromptCache.addToCache({
+          userId: job.userId,
+          query: job.query,
+          response: JSON.stringify(report),
+          responseMetadata: {
+            sourceCount: sourceMetrics.uniqueSources,
+            domainCount: sourceMetrics.domainCount,
+            duration,
+          },
+          context: request.context ? { query: request.context } : undefined,
+          focusAreas: request.focusAreas,
+        });
+      } catch (cacheError) {
+        logger.warn({ error: cacheError }, 'Failed to add result to semantic cache');
+      }
 
       if (config.isUsingGradient && report.investmentConclusion) {
         try {
@@ -234,6 +421,8 @@ export class ResearchService {
       job.status = 'failed';
       job.error = error instanceof Error ? error.message : 'Unknown error';
       job.updatedAt = new Date();
+
+      await this.updateJobStatus(jobId, 'failed', undefined, job.error);
 
       this.broadcastToJob(jobId, {
         type: 'error',
@@ -436,14 +625,18 @@ export class ResearchService {
   private async storeInVectorDB(job: ResearchJob): Promise<void> {
     if (!job.result) return;
 
-    const queryEmbedding = await embeddingService.embedQuery(job.query);
+    if (!config.isVectorDbAvailable) {
+      return;
+    }
+
+    const db = getDb();
 
     await db
       .insert(researchJobs)
       .values({
         id: job.id,
+        userId: job.userId,
         query: job.query,
-        queryEmbedding,
         status: job.status,
         result: job.result,
         metadata: job.metadata ?? {},
@@ -454,8 +647,8 @@ export class ResearchService {
       .onConflictDoUpdate({
         target: researchJobs.id,
         set: {
+          userId: job.userId,
           query: job.query,
-          queryEmbedding,
           status: job.status,
           result: job.result,
           metadata: job.metadata ?? {},
@@ -469,6 +662,7 @@ export class ResearchService {
     if (job.result.sources.length > 0) {
       await db.insert(sourceTable).values(
         job.result.sources.map((source) => ({
+          userId: job.userId,
           jobId: job.id,
           url: source.url,
           title: source.title,
@@ -477,130 +671,6 @@ export class ResearchService {
         })),
       );
     }
-
-    const chunks = this.collectEmbeddingChunks(job);
-    const embeddedChunks = await embeddingService.embedResearchChunks(chunks);
-
-    await vectorStoreService.deleteJobEmbeddings(job.id);
-    await vectorStoreService.storeContentEmbeddings(job.id, embeddedChunks);
-  }
-
-  private collectEmbeddingChunks(job: ResearchJob): Array<{
-    content: string;
-    source?: string;
-    sourceType?: 'web_search' | 'report_section' | 'chat_message';
-    metadata?: Record<string, unknown>;
-  }> {
-    if (!job.result) return [];
-
-    const chunks: Array<{
-      content: string;
-      source?: string;
-      sourceType?: 'web_search' | 'report_section' | 'chat_message';
-      metadata?: Record<string, unknown>;
-    }> = [];
-
-    const report = job.result;
-    const reportSections: Array<[string, string]> = [
-      ['executive_summary', report.executiveSummary],
-      ['company_snapshot', report.companySnapshot],
-      ['industry_market_structure', report.industryAndMarketStructure],
-      ['business_model_unit_economics', report.businessModelAndUnitEconomics],
-      ['financial_quality_trend_analysis', report.financialQualityAndTrendAnalysis],
-      ['capital_allocation_review', report.capitalAllocationReview],
-      ['valuation_relative', report.valuationRelative],
-      ['valuation_intrinsic', report.valuationIntrinsic],
-      ['competitive_position_moat', report.competitivePositionAndMoat],
-      ['management_governance_assessment', report.managementGovernanceAssessment],
-      ['regulatory_legal_risk', report.regulatoryAndLegalRisk],
-      ['bull_case', report.bullCase],
-      ['bear_case', report.bearCase],
-      ['catalyst_calendar', report.catalystCalendar],
-      ['portfolio_construction_view', report.portfolioConstructionView],
-      ['investment_conclusion', report.investmentConclusion],
-    ];
-
-    for (const [section, content] of reportSections) {
-      const text = content.trim();
-      if (!text) continue;
-      const split = chunkText(text, MAX_SECTION_CHARS);
-      split.forEach((part, index) => {
-        chunks.push({
-          content: `[${section}] ${part}`,
-          source: `section:${section}`,
-          sourceType: 'report_section' as const,
-          metadata: { section, chunkIndex: index, chunkCount: split.length },
-        });
-      });
-    }
-
-    const scenarioText = JSON.stringify(report.scenarioFramework);
-    if (scenarioText.length > 2) {
-      const split = chunkText(scenarioText, MAX_SECTION_CHARS);
-      split.forEach((part, index) => {
-        chunks.push({
-          content: `[scenario_framework] ${part}`,
-          source: 'section:scenario_framework',
-          sourceType: 'report_section',
-          metadata: { section: 'scenarioFramework', chunkIndex: index, chunkCount: split.length },
-        });
-      });
-    }
-
-    const evidenceText = JSON.stringify(report.evidenceIndex);
-    if (evidenceText.length > 2) {
-      const split = chunkText(evidenceText, MAX_SECTION_CHARS);
-      split.forEach((part, index) => {
-        chunks.push({
-          content: `[evidence_index] ${part}`,
-          source: 'section:evidence_index',
-          sourceType: 'report_section',
-          metadata: { section: 'evidenceIndex', chunkIndex: index, chunkCount: split.length },
-        });
-      });
-    }
-
-    for (const source of report.sources) {
-      const sourceContent = [
-        source.title,
-        source.snippet,
-        `URL: ${source.url}`,
-      ].filter(Boolean).join('\n');
-
-      if (!sourceContent.trim()) continue;
-
-      const split = chunkText(sourceContent, MAX_SOURCE_CHARS);
-      split.forEach((part, index) => {
-        chunks.push({
-          content: part,
-          source: source.url,
-          sourceType: 'web_search',
-          metadata: {
-            publishedDate: source.publishedDate,
-            domain: source.domain,
-            chunkIndex: index,
-            chunkCount: split.length,
-          },
-        });
-      });
-    }
-
-    const files = job.metadata?.files ?? {};
-    for (const [filePath, fileContent] of Object.entries(files)) {
-      const text = fileContent.trim();
-      if (!text) continue;
-      const split = chunkText(text, MAX_FILE_CHARS);
-      split.forEach((part, index) => {
-        chunks.push({
-          content: `[artifact:${filePath}] ${part}`,
-          source: `artifact:${filePath}`,
-          sourceType: 'report_section',
-          metadata: { artifact: filePath, chunkIndex: index, chunkCount: split.length },
-        });
-      });
-    }
-
-    return chunks;
   }
 
   registerWebSocket(jobId: string, ws: WebSocketLike): void {

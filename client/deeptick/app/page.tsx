@@ -7,21 +7,27 @@ import {
   Loader2,
   RefreshCw,
   Sparkles,
+  LogOut,
+  User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Sidebar } from "@/components/sidebar";
 import { ResearchCard } from "@/components/research-card";
 import { ResearchReportView } from "@/components/research-report";
 import { NewResearchDialog } from "@/components/new-research-dialog";
 import { EmptyState } from "@/components/empty-state";
+import { AuthDialog } from "@/components/auth-dialog";
 import { api, useGradient } from "@/lib/api";
+import { useSession, signOut } from "@/lib/auth-client";
 import type { ResearchJob } from "@/lib/types";
 
 export default function Home() {
+  const { data: session, isPending: sessionLoading } = useSession();
   const [jobs, setJobs] = useState<ResearchJob[]>([]);
   const [selectedJob, setSelectedJob] = useState<ResearchJob | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -29,6 +35,18 @@ export default function Home() {
   const [showNewDialog, setShowNewDialog] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [showAuthDialog, setShowAuthDialog] = useState(false);
+
+  const isAuthenticated = !!session?.user;
+  const userInitials = session?.user?.name
+    ? session.user.name.split(" ").map((n) => n[0]).join("").toUpperCase()
+    : session?.user?.email?.[0]?.toUpperCase() || "U";
+
+  const handleSignOut = async () => {
+    await signOut();
+    setJobs([]);
+    setShowAuthDialog(true);
+  };
 
   const fetchJobs = useCallback(async () => {
     try {
@@ -60,8 +78,16 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    fetchJobs();
-  }, [fetchJobs]);
+    if (!sessionLoading && !session) {
+      setShowAuthDialog(true);
+    }
+  }, [sessionLoading, session]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchJobs();
+    }
+  }, [isAuthenticated, fetchJobs]);
 
   const handleCreateResearch = async (
     query: string,
@@ -192,16 +218,35 @@ export default function Home() {
                 </motion.div>
               )}
             </div>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={fetchJobs}
-              disabled={isLoading}
-            >
-              <RefreshCw
-                className={cn("h-4 w-4", isLoading && "animate-spin")}
-              />
-            </Button>
+            <div className="flex items-center gap-2">
+              {isAuthenticated && session?.user && (
+                <div className="flex items-center gap-2 mr-2">
+                  <Avatar className="h-8 w-8">
+                    <AvatarFallback className="text-xs">{userInitials}</AvatarFallback>
+                  </Avatar>
+                  <span className="text-sm hidden lg:block">{session.user.name || session.user.email}</span>
+                </div>
+              )}
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={fetchJobs}
+                disabled={isLoading}
+              >
+                <RefreshCw
+                  className={cn("h-4 w-4", isLoading && "animate-spin")}
+                />
+              </Button>
+              {isAuthenticated ? (
+                <Button variant="outline" size="icon" onClick={handleSignOut}>
+                  <LogOut className="h-4 w-4" />
+                </Button>
+              ) : (
+                <Button variant="outline" size="icon" onClick={() => setShowAuthDialog(true)}>
+                  <User className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
           </div>
 
           <div className="p-4 space-y-4">
@@ -325,6 +370,8 @@ export default function Home() {
         onSubmit={handleCreateResearch}
         isLoading={isCreating}
       />
+
+      <AuthDialog open={showAuthDialog} onOpenChange={setShowAuthDialog} />
     </div>
   );
 }

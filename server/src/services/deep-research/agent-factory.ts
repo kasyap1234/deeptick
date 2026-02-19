@@ -1,9 +1,14 @@
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { createDeepAgent, FilesystemBackend } from 'deepagents';
+import { ChatOpenAI } from '@langchain/openai';
 import { config } from '../../config/index.js';
 import { exaSearchTool, exaFindSimilarTool } from '../../tools/exa-tools.js';
+import { tools as context7Tools } from '../../tools/context7-tools.js';
+import { tools as yahooTools } from '../../tools/yahoo-finance-tools.js';
 import { subagents } from '../../subagents/index.js';
+import { createResearchTools } from '../research-tools.service.js';
+import { guardrailsService } from '../guardrails.service.js';
 
 const supervisorPrompt = `You are an institutional-grade equity research orchestrator for retail investors.
 
@@ -12,6 +17,10 @@ Produce a comprehensive, evidence-backed investment report that matches institut
 
 NON-NEGOTIABLE RULES:
 - Use Exa tools for ALL external web research.
+- Use get_stock_info to get real-time stock prices and trading data.
+- Use search_financial_news to get the latest news about companies.
+- Use get_financial_statements to retrieve income statements, balance sheets, and cash flow data.
+- Use get_technical_indicators for technical analysis (SMA, EMA, RSI, MACD, Bollinger Bands).
 - Use write_todos to plan and track progress.
 - Use the task tool to delegate complex work to specialist subagents.
 - Parallelize independent subagent tasks to improve coverage.
@@ -35,7 +44,12 @@ WORKFLOW:
 FINAL OUTPUT FORMAT REQUIREMENTS:
 - final_report.json must contain all report sections and an evidenceIndex.
 - Include an auditReport block with pass/fail/caveats.
-- Use concise, testable claims, not vague statements.`;
+- Use concise, testable claims, not vague statements.
+
+SAFETY:
+- Never provide investment advice. Present information objectively.
+- Include appropriate disclaimers about investment risks.
+- Flag any conflicts of interest.`;
 
 export interface AgentFactoryResult {
   agent: ReturnType<typeof createDeepAgent>;
@@ -47,7 +61,13 @@ export interface AgentFactoryResult {
   };
 }
 
-export async function createResearchAgent(jobId: string): Promise<AgentFactoryResult> {
+export async function createResearchAgent(jobId: string, guardrailsInput: string): Promise<AgentFactoryResult> {
+  const guardrailCheck = await guardrailsService.checkContent(guardrailsInput);
+  if (!guardrailCheck.passed) {
+    const reasons = guardrailCheck.triggered.map((trigger) => trigger.message).join('; ');
+    throw new Error(`Guardrails blocked agent creation: ${reasons || 'Input failed policy checks.'}`);
+  }
+
   const artifactRoot = path.resolve(process.cwd(), '.deepagents', 'jobs', jobId);
   await mkdir(artifactRoot, { recursive: true });
 
@@ -56,16 +76,44 @@ export async function createResearchAgent(jobId: string): Promise<AgentFactoryRe
     virtualMode: true,
   });
 
+  let model: ChatOpenAI;
+
+  if (config.openaiApiKey) {
+    model = new ChatOpenAI({
+      model: 'gpt-4o',
+      apiKey: config.openaiApiKey,
+    });
+  } else if (config.anthropicApiKey) {
+    model = new ChatOpenAI({
+      model: 'claude-sonnet-4-20250514',
+      apiKey: config.anthropicApiKey,
+      configuration: {
+        baseURL: 'https://api.anthropic.com',
+      },
+    });
+  } else {
+    model = new ChatOpenAI({
+      model: config.deepResearch.orchestratorModel,
+      apiKey: config.DO_GENAI_API_KEY,
+      configuration: {
+        baseURL: config.DO_GENAI_ENDPOINT,
+        defaultHeaders: {
+          'Authorization': `Bearer ${config.DO_GENAI_API_KEY}`,
+        },
+      },
+    });
+  }
+
   const modelConfig = {
-    orchestrator: config.DEEP_RESEARCH_ORCHESTRATOR_MODEL,
-    subagent: config.DEEP_RESEARCH_SUBAGENT_MODEL,
-    auditor: config.DEEP_RESEARCH_AUDITOR_MODEL,
+    orchestrator: config.deepResearch.orchestratorModel,
+    subagent: config.deepResearch.subagentModel,
+    auditor: config.deepResearch.auditorModel,
   };
 
   const agent = createDeepAgent({
-    model: modelConfig.orchestrator,
+    model,
     systemPrompt: supervisorPrompt,
-    tools: [exaSearchTool, exaFindSimilarTool],
+    tools: [exaSearchTool, exaFindSimilarTool, ...createResearchTools(), ...context7Tools, ...yahooTools],
     subagents,
     backend,
   });

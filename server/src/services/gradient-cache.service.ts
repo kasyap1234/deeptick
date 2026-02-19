@@ -172,10 +172,10 @@ export class GradientCacheService {
       throw new Error(`Failed to invoke pre-configured agent: ${response.status} - ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as Record<string, unknown>;
     return {
-      response: data.choices?.[0]?.message?.content || '',
-      retrieval: data.retrieval,
+      response: ((data.choices as any)?.[0]?.message?.content as string | undefined) || '',
+      retrieval: data.retrieval as RetrievalInfo | undefined,
     };
   }
 

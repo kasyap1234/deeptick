@@ -1,11 +1,10 @@
 import { Elysia } from 'elysia';
 import { cors } from '@elysiajs/cors';
+import { authRoutes } from './api/routes/auth.routes.js';
 import { researchRoutes } from './api/routes/research.routes.js';
-import { enhancedChatRoutes } from './api/routes/enhanced-chat.routes.js';
+import { chatRoutes } from './api/routes/chat.routes.js';
 import { healthRoutes } from './api/routes/health.routes.js';
 import { gradientRoutes } from './api/routes/gradient.routes.js';
-import { researchWebSocket } from './api/websocket/research.ws.js';
-import { chatWebSocket } from './api/websocket/chat.ws.js';
 import { config } from './config/index.js';
 import { logger } from './utils/logger.js';
 
@@ -15,11 +14,10 @@ const app = new Elysia()
     credentials: true,
   }))
   .use(healthRoutes)
+  .use(authRoutes)
   .use(researchRoutes)
-  .use(enhancedChatRoutes)
+  .use(chatRoutes)
   .use(gradientRoutes)
-  .use(researchWebSocket)
-  .use(chatWebSocket)
   .onError(({ error, set }) => {
     logger.error({ error }, 'Unhandled server error');
     set.status = 500;

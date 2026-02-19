@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useMemo } from "react";
 
 type Theme = "light" | "dark" | "system";
 
@@ -18,49 +18,42 @@ interface ThemeProviderState {
 
 const ThemeProviderContext = createContext<ThemeProviderState | undefined>(undefined);
 
+function getResolvedTheme(t: Theme): "light" | "dark" {
+  if (typeof window === "undefined") return "light";
+  if (t === "system") {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  return t;
+}
+
+function getInitialTheme(defaultTheme: Theme, storageKey: string): Theme {
+  if (typeof window === "undefined") return defaultTheme;
+  return (localStorage.getItem(storageKey) as Theme) || defaultTheme;
+}
+
 export function ThemeProvider({
   children,
   defaultTheme = "system",
   storageKey = "deeptick-theme",
 }: ThemeProviderProps) {
-  const [theme, setThemeState] = useState<Theme>(defaultTheme);
-  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">("light");
-  const [mounted, setMounted] = useState(false);
+  const theme = getInitialTheme(defaultTheme, storageKey);
+  const resolvedTheme = useMemo(() => getResolvedTheme(theme), [theme]);
 
   useEffect(() => {
-    setMounted(true);
-    const savedTheme = localStorage.getItem(storageKey) as Theme | null;
-    if (savedTheme) {
-      setThemeState(savedTheme);
-    }
-  }, [storageKey]);
-
-  useEffect(() => {
-    if (!mounted) return;
-
     const root = window.document.documentElement;
     root.classList.remove("light", "dark");
-
-    let resolved: "light" | "dark";
-    if (theme === "system") {
-      resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    } else {
-      resolved = theme;
-    }
-
-    root.classList.add(resolved);
-    setResolvedTheme(resolved);
-  }, [theme, mounted]);
+    root.classList.add(resolvedTheme);
+  }, [resolvedTheme]);
 
   const setTheme = (newTheme: Theme) => {
     localStorage.setItem(storageKey, newTheme);
-    setThemeState(newTheme);
+    window.location.reload();
   };
 
   const value = {
-    theme: mounted ? theme : defaultTheme,
+    theme,
     setTheme,
-    resolvedTheme: mounted ? resolvedTheme : "light",
+    resolvedTheme,
   };
 
   return (

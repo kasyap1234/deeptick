@@ -4,23 +4,21 @@ import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import * as schema from './schema.js';
 
-// Connection pool for Drizzle ORM
-const connectionString = config.vectorDatabaseUrl;
+const client = postgres(config.DATABASE_URL, {
+  max: 10,
+  idle_timeout: 20,
+  connect_timeout: 10,
+  prepare: false,
+  ssl: {
+    rejectUnauthorized: false,
+  },
+});
 
-let client: postgres.Sql | null = null;
-let db: ReturnType<typeof drizzle> | null = null;
+export const db = drizzle(client, { schema });
+logger.info('PostgreSQL database connection initialized');
 
-if (connectionString) {
-  client = postgres(connectionString, {
-    max: 10,
-    idle_timeout: 20,
-    connect_timeout: 10,
-    prepare: false,
-  });
-  db = drizzle(client, { schema });
-  logger.info('Vector database connection initialized');
-} else {
-  logger.info('Vector database not configured - running in Gradient-only mode');
+export { client };
+
+export function getDb() {
+  return db;
 }
-
-export { db, client };

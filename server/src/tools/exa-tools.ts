@@ -4,6 +4,14 @@ import { ExaSearchResults, ExaFindSimilarResults } from '@langchain/exa';
 import Exa from 'exa-js';
 import { config } from '../config/index.js';
 
+type ExaTool = {
+  name: string;
+  description: string;
+  invoke: (input: unknown, config?: unknown) => Promise<unknown>;
+};
+
+const makeTool = tool as any;
+
 export interface NormalizedExaResult {
   url: string;
   title: string;
@@ -14,7 +22,7 @@ export interface NormalizedExaResult {
   score?: number;
 }
 
-const exaApiKey = config.EXASEARCH_API_KEY ?? config.EXA_API_KEY;
+const exaApiKey = config.exaApiKey;
 if (!exaApiKey) {
   throw new Error('Missing EXASEARCH_API_KEY (or legacy EXA_API_KEY) for Exa web search integration.');
 }
@@ -77,7 +85,7 @@ function normalizeResults(raw: unknown): NormalizedExaResult[] {
   return results;
 }
 
-export const exaSearchTool = tool(
+export const exaSearchTool: ExaTool = makeTool(
   async ({ query, maxResults = 10 }: { query: string; maxResults?: number }) => {
     const searchTool = new ExaSearchResults({
       client: exaClient,
@@ -115,7 +123,7 @@ export const exaSearchTool = tool(
   }
 );
 
-export const exaFindSimilarTool = tool(
+export const exaFindSimilarTool: ExaTool = makeTool(
   async ({ url, maxResults = 8 }: { url: string; maxResults?: number }) => {
     const similarTool = new ExaFindSimilarResults({
       client: exaClient,
