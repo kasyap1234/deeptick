@@ -1,6 +1,7 @@
 import type { SubAgent } from 'deepagents';
+import { ChatOpenAI } from '@langchain/openai';
 import { exaSearchTool, exaFindSimilarTool } from '../tools/exa-tools.js';
-import { config } from '../config/index.js';
+import { config, normalizeModelForOpenAICompatible } from '../config/index.js';
 
 type SubAgentSpec = {
   name: string;
@@ -11,15 +12,53 @@ type SubAgentSpec = {
   model?: string;
 };
 
+function createSubagentModel(spec: SubAgentSpec): ChatOpenAI {
+  const rawModel = spec.model ?? config.deepResearch.subagentModel;
+
+  if (config.openaiApiKey) {
+    return new ChatOpenAI({
+      model: 'gpt-4o',
+      apiKey: config.openaiApiKey,
+    });
+  }
+
+  if (config.anthropicApiKey) {
+    return new ChatOpenAI({
+      model: rawModel,
+      apiKey: config.anthropicApiKey,
+      configuration: { baseURL: 'https://api.anthropic.com' },
+    });
+  }
+
+  if (config.DO_GENAI_API_KEY) {
+    return new ChatOpenAI({
+      model: normalizeModelForOpenAICompatible(rawModel),
+      apiKey: config.DO_GENAI_API_KEY,
+      configuration: {
+        baseURL: config.DO_GENAI_ENDPOINT,
+        defaultHeaders: { Authorization: `Bearer ${config.DO_GENAI_API_KEY}` },
+      },
+    });
+  }
+
+  // Fallback: create with raw model string
+  return new ChatOpenAI({ model: rawModel });
+}
+
 function buildSubagent(spec: SubAgentSpec): SubAgent {
   const tools = (spec.useSimilarityTool ? [exaSearchTool, exaFindSimilarTool] : [exaSearchTool]) as any;
+  const today = new Date().toISOString().split('T')[0];
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const currentFY = new Date().getFullYear() + (new Date().getMonth() >= 3 ? 1 : 0);
 
   return {
     name: spec.name,
     description: spec.description,
-    model: spec.model ?? config.deepResearch.subagentModel,
+    model: createSubagentModel(spec),
     tools,
     systemPrompt: `You are ${spec.name}, a specialist in institutional equity research.
+
+Today's date: ${today}. When searching for recent data, prioritize content from the last 90 days (since ${ninetyDaysAgo}). Use FY${currentFY} and current quarter references relative to today.
 
 MANDATORY RULES:
 - Use Exa tools for all web research.
@@ -180,7 +219,7 @@ const subagentSpecs: SubAgentSpec[] = [
     description: 'Audits final claims for citation sufficiency and consistency.',
     focus: ['Numerical claim verification', 'Citation sufficiency', 'Unresolved contradiction list'],
     outputFile: 'subagents/compliance_audit.md',
-  model: config.deepResearch.auditorModel,
+    model: config.deepResearch.auditorModel,
   },
 ];
 

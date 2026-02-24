@@ -23,11 +23,20 @@ export interface NormalizedExaResult {
 }
 
 const exaApiKey = config.exaApiKey;
-if (!exaApiKey) {
-  throw new Error('Missing EXASEARCH_API_KEY (or legacy EXA_API_KEY) for Exa web search integration.');
-}
+const exaClient = exaApiKey ? new Exa(exaApiKey) : null;
 
-const exaClient = new Exa(exaApiKey);
+function exaNotConfiguredPayload(query: string, maxResults: number) {
+  return JSON.stringify({
+    provider: 'exa',
+    query,
+    maxResults,
+    totalResults: 0,
+    results: [],
+    error: 'Exa search is not configured. Set EXASEARCH_API_KEY (or EXA_API_KEY).',
+    code: 'FEATURE_NOT_CONFIGURED',
+    retryable: false,
+  });
+}
 
 function normalizeResults(raw: unknown): NormalizedExaResult[] {
   if (!raw) return [];
@@ -87,10 +96,19 @@ function normalizeResults(raw: unknown): NormalizedExaResult[] {
 
 export const exaSearchTool: ExaTool = makeTool(
   async ({ query, maxResults = 10 }: { query: string; maxResults?: number }) => {
+    if (!exaClient) {
+      return exaNotConfiguredPayload(query, maxResults);
+    }
+
+    const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .split('T')[0];
+
     const searchTool = new ExaSearchResults({
       client: exaClient,
       searchArgs: {
         numResults: maxResults,
+        startPublishedDate: oneYearAgo,
         highlights: {
           numSentences: 2,
           highlightsPerUrl: 2,
@@ -125,6 +143,19 @@ export const exaSearchTool: ExaTool = makeTool(
 
 export const exaFindSimilarTool: ExaTool = makeTool(
   async ({ url, maxResults = 8 }: { url: string; maxResults?: number }) => {
+    if (!exaClient) {
+      return JSON.stringify({
+        provider: 'exa',
+        seedUrl: url,
+        maxResults,
+        totalResults: 0,
+        results: [],
+        error: 'Exa search is not configured. Set EXASEARCH_API_KEY (or EXA_API_KEY).',
+        code: 'FEATURE_NOT_CONFIGURED',
+        retryable: false,
+      });
+    }
+
     const similarTool = new ExaFindSimilarResults({
       client: exaClient,
       searchArgs: {

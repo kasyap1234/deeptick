@@ -2,7 +2,7 @@ import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { createDeepAgent, FilesystemBackend } from 'deepagents';
 import { ChatOpenAI } from '@langchain/openai';
-import { config } from '../../config/index.js';
+import { config, normalizeModelForOpenAICompatible } from '../../config/index.js';
 import { exaSearchTool, exaFindSimilarTool } from '../../tools/exa-tools.js';
 import { tools as context7Tools } from '../../tools/context7-tools.js';
 import { tools as yahooTools } from '../../tools/yahoo-finance-tools.js';
@@ -10,7 +10,14 @@ import { subagents } from '../../subagents/index.js';
 import { createResearchTools } from '../research-tools.service.js';
 import { guardrailsService } from '../guardrails.service.js';
 
-const supervisorPrompt = `You are an institutional-grade equity research orchestrator for retail investors.
+function buildSupervisorPrompt(): string {
+  const today = new Date().toISOString().split('T')[0];
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const currentFY = new Date().getFullYear() + (new Date().getMonth() >= 3 ? 1 : 0);
+
+  return `You are an institutional-grade equity research orchestrator for retail investors.
+
+Today's date: ${today}. Use FY${currentFY} and current quarter references. When searching for recent data, prioritize content from the last 90 days (since ${ninetyDaysAgo}).
 
 MISSION:
 Produce a comprehensive, evidence-backed investment report that matches institutional research depth.
@@ -30,7 +37,7 @@ NON-NEGOTIABLE RULES:
 RESEARCH DEPTH TARGETS:
 - At least 80 unique sources
 - At least 12 unique domains
-- At least 25 sources from the last 90 days
+- At least 25 sources from the last 90 days (i.e., since ${ninetyDaysAgo})
 - At least 2 independent citations for each material numerical claim
 
 WORKFLOW:
@@ -50,6 +57,7 @@ SAFETY:
 - Never provide investment advice. Present information objectively.
 - Include appropriate disclaimers about investment risks.
 - Flag any conflicts of interest.`;
+}
 
 export interface AgentFactoryResult {
   agent: ReturnType<typeof createDeepAgent>;
@@ -91,9 +99,9 @@ export async function createResearchAgent(jobId: string, guardrailsInput: string
         baseURL: 'https://api.anthropic.com',
       },
     });
-  } else {
+  } else if (config.DO_GENAI_API_KEY) {
     model = new ChatOpenAI({
-      model: config.deepResearch.orchestratorModel,
+      model: normalizeModelForOpenAICompatible(config.deepResearch.orchestratorModel),
       apiKey: config.DO_GENAI_API_KEY,
       configuration: {
         baseURL: config.DO_GENAI_ENDPOINT,
@@ -102,6 +110,8 @@ export async function createResearchAgent(jobId: string, guardrailsInput: string
         },
       },
     });
+  } else {
+    throw new Error('No LLM provider configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or DO_GENAI_API_KEY.');
   }
 
   const modelConfig = {
@@ -112,7 +122,7 @@ export async function createResearchAgent(jobId: string, guardrailsInput: string
 
   const agent = createDeepAgent({
     model,
-    systemPrompt: supervisorPrompt,
+    systemPrompt: buildSupervisorPrompt(),
     tools: [exaSearchTool, exaFindSimilarTool, ...createResearchTools(), ...context7Tools, ...yahooTools],
     subagents,
     backend,
