@@ -16,24 +16,24 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
 
   // AI/LLM Providers
-  DO_GENAI_API_KEY: z.string().min(1),
+  DO_GENAI_API_KEY: z.string().optional(),
   DO_GENAI_ENDPOINT: z.string().url().default('https://inference.do-ai.run/v1'),
   OPENAI_API_KEY: z.string().optional(),
-  ANTHROPIC_API_KEY: z.string().optional(),
-
   // Gradient AI Platform
-  GRADIENT_PROJECT_ID: z.string().min(1),
+  GRADIENT_PROJECT_ID: z.string().optional(),
   GRADIENT_REGION: z.string().optional().default('tor1'),
   GRADIENT_MODEL_UUID: z.string().optional(),
   GRADIENT_AGENT_ENDPOINT: z.string().url().optional(),
   GRADIENT_AGENT_ACCESS_KEY: z.string().min(1).optional(),
   GRADIENT_KB_EMBEDDING_MODEL_URN: z.string().optional(),
-  
+
   // Guardrails Configuration
   GUARDRAIL_SENSITIVE_DATA: z.string().optional(),
   GUARDRAIL_JAILBREAK: z.string().optional(),
   GUARDRAIL_CONTENT_MODERATION: z.string().optional(),
   ENABLE_GUARDRAILS: z.string().optional().default('true'),
+  GUARDRAILS_FAIL_OPEN: z.string().optional().default('true'),
+  DIGITALOCEAN_TOKEN: z.string().optional(),
 
   // Search Providers
   EXASEARCH_API_KEY: z.string().optional(),
@@ -42,10 +42,14 @@ const envSchema = z.object({
   // Stock Data Providers
   ALPHA_VANTAGE_API_KEY: z.string().optional(),
 
-  // Deep Research Models
-  DEEP_RESEARCH_ORCHESTRATOR_MODEL: z.string().optional().default('claude-sonnet-4-20250514'),
-  DEEP_RESEARCH_SUBAGENT_MODEL: z.string().optional().default('claude-sonnet-4-20250514'),
-  DEEP_RESEARCH_AUDITOR_MODEL: z.string().optional().default('claude-sonnet-4-20250514'),
+  // Deep Research Models — spread across different DO open-source models to avoid single-model rate limits
+  // See: https://docs.digitalocean.com/products/gradient-ai-platform/details/models/
+  // Bucket 1: orchestrator + financials/valuation subagents
+  DEEP_RESEARCH_ORCHESTRATOR_MODEL: z.string().optional().transform(v => v || undefined).default('openai-gpt-oss-120b'),
+  // Bucket 2: research-focused subagents (market, competitive, thesis)
+  DEEP_RESEARCH_SUBAGENT_MODEL: z.string().optional().transform(v => v || undefined).default('alibaba-qwen3-32b'),
+  // Bucket 3: auditor + india-market subagent (reasoning model)
+  DEEP_RESEARCH_AUDITOR_MODEL: z.string().optional().transform(v => v || undefined).default('deepseek-r1-distill-llama-70b'),
 
   // LangSmith Tracing
   LANGCHAIN_TRACING_V2: z.string().optional().default('false'),
@@ -67,12 +71,6 @@ const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
   envLogger.error({ errors: parsed.error.format() }, 'Environment validation failed');
-  process.exit(1);
-}
-
-const hasExaKey = Boolean(parsed.data.EXASEARCH_API_KEY || parsed.data.EXA_API_KEY);
-if (!hasExaKey) {
-  envLogger.error('Environment validation failed: EXASEARCH_API_KEY (preferred) or EXA_API_KEY must be set.');
   process.exit(1);
 }
 
@@ -101,9 +99,9 @@ export const config = {
     trustedOrigins: getCorsOrigins(),
     google: parsed.data.GOOGLE_CLIENT_ID && parsed.data.GOOGLE_CLIENT_SECRET
       ? {
-          clientId: parsed.data.GOOGLE_CLIENT_ID,
-          clientSecret: parsed.data.GOOGLE_CLIENT_SECRET,
-        }
+        clientId: parsed.data.GOOGLE_CLIENT_ID,
+        clientSecret: parsed.data.GOOGLE_CLIENT_SECRET,
+      }
       : undefined,
   },
 
@@ -120,14 +118,13 @@ export const config = {
   maxResults: parsed.data.MAX_RESULTS,
 
   // AI Providers
-  DO_GENAI_API_KEY: parsed.data.DO_GENAI_API_KEY,
+  DO_GENAI_API_KEY: parsed.data.DO_GENAI_API_KEY ?? '',
   DO_GENAI_ENDPOINT: parsed.data.DO_GENAI_ENDPOINT,
   openaiApiKey: parsed.data.OPENAI_API_KEY,
-  anthropicApiKey: parsed.data.ANTHROPIC_API_KEY,
 
   // Gradient
   gradient: {
-    projectId: parsed.data.GRADIENT_PROJECT_ID,
+    projectId: parsed.data.GRADIENT_PROJECT_ID ?? '',
     region: parsed.data.GRADIENT_REGION,
     modelUuid: parsed.data.GRADIENT_MODEL_UUID,
     agentEndpoint: parsed.data.GRADIENT_AGENT_ENDPOINT,
@@ -138,13 +135,17 @@ export const config = {
   // Guardrails
   guardrails: {
     enabled: parsed.data.ENABLE_GUARDRAILS === 'true',
+    failOpen: parsed.data.GUARDRAILS_FAIL_OPEN === 'true',
     sensitiveDataId: parsed.data.GUARDRAIL_SENSITIVE_DATA,
     jailbreakId: parsed.data.GUARDRAIL_JAILBREAK,
     contentModerationId: parsed.data.GUARDRAIL_CONTENT_MODERATION,
   },
 
+  // DigitalOcean API token (for guardrails, etc.)
+  digitalOceanToken: parsed.data.DIGITALOCEAN_TOKEN ?? '',
+
   // Search
-  exaApiKey: parsed.data.EXASEARCH_API_KEY || parsed.data.EXA_API_KEY,
+  exaApiKey: parsed.data.EXASEARCH_API_KEY || parsed.data.EXA_API_KEY || '',
 
   // Stock Data
   alphaVantageApiKey: parsed.data.ALPHA_VANTAGE_API_KEY,
@@ -168,3 +169,27 @@ export const config = {
   NODE_ENV: parsed.data.NODE_ENV,
   LOG_LEVEL: parsed.data.LOG_LEVEL,
 };
+
+/**
+ * Model name patterns that use the OpenAI-compatible API (ChatOpenAI).
+ * - gpt-*: standard OpenAI model IDs (gpt-4o, gpt-3.5-turbo, etc.)
+ * - openai-*: DigitalOcean serverless inference IDs (openai-gpt-oss-120b, openai-gpt-4o, etc.)
+ * - anthropic-*, llama*, deepseek-*, etc.: DO uses same OpenAI-compatible endpoint for all
+ *   (see https://docs.digitalocean.com/products/gradient-ai-platform/details/models/)
+ */
+const OPENAI_COMPATIBLE_PREFIXES =
+  /^(gpt-(3\.5|4|4o|4-turbo)|openai-|anthropic-|llama|deepseek-|alibaba-|mistral-)/i;
+
+/**
+ * For OpenAI-compatible backends (e.g. DO_GENAI_ENDPOINT), use a model name that is passed
+ * through to the API. DigitalOcean model IDs (openai-gpt-oss-120b, openai-gpt-4o,
+ * anthropic-claude-5-sonnet, etc.) are accepted as-is so the correct model is used.
+ * Unrecognized names are normalized to openai-gpt-4o (a common DO model ID).
+ */
+export function normalizeModelForOpenAICompatible(model: string): string {
+  const trimmed = model.trim();
+  if (OPENAI_COMPATIBLE_PREFIXES.test(trimmed)) {
+    return trimmed;
+  }
+  return 'openai-gpt-4o';
+}

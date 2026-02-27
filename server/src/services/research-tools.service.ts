@@ -2,6 +2,20 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
+const TOOL_FETCH_TIMEOUT_MS = 20_000;
+
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TOOL_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 const stockInfoSchema = z.object({
   symbol: z.string().describe('Stock ticker symbol (e.g., AAPL, NVDA, MSFT)'),
@@ -30,9 +44,9 @@ async function getStockInfo(symbol: string): Promise<string> {
     }
 
     const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${config.alphaVantageApiKey}`;
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
     const data = await response.json() as Record<string, unknown>;
-    
+
     const quote = data['Global Quote'] as Record<string, string> | undefined;
     if (!quote || Object.keys(quote).length === 0) {
       return JSON.stringify({ error: 'No data found for symbol', symbol });
@@ -63,7 +77,7 @@ async function searchNews(query: string, limit: number = 10): Promise<string> {
     }
 
     const url = 'https://api.exa.ai/search';
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${exaKey}`,
@@ -116,7 +130,7 @@ async function getFinancialData(symbol: string, dataType: string): Promise<strin
     };
 
     const url = `https://www.alphavantage.co/query?function=${functions[dataType]}&symbol=${symbol}&apikey=${config.alphaVantageApiKey}`;
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
     const data = await response.json() as Record<string, unknown>;
 
     if (data['Note'] || data['Information']) {
@@ -145,7 +159,7 @@ async function getTechnicalAnalysis(symbol: string, indicator: string, period: n
     };
 
     const url = `https://www.alphavantage.co/query?function=${indicators[indicator]}&symbol=${symbol}&interval=daily&time_period=${period}&series_type=close&apikey=${config.alphaVantageApiKey}`;
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
     const data = await response.json() as Record<string, unknown>;
 
     if (data['Note'] || data['Information']) {

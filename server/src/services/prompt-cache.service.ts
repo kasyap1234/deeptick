@@ -20,7 +20,7 @@ export class PromptCachingService {
   private stats: PromptCacheStats = { hits: 0, misses: 0, savings: 0 };
   private defaultTtl = 5 * 60 * 1000;
 
-  constructor(private cacheSize = 100, private ttl = 5 * 60 * 1000) {
+  constructor(private cacheSize = 100, ttl = 5 * 60 * 1000) {
     this.defaultTtl = ttl;
   }
 
@@ -162,8 +162,6 @@ export class GradientPromptCacheService {
     messages: Array<{ role: string; content: string }>,
     useCache = true
   ): Promise<{ response: string; cached: boolean; tokens: number }> {
-    const lastMessage = messages[messages.length - 1];
-    
     const response = await fetch(`${agentEndpoint}/api/v1/chat/completions`, {
       method: 'POST',
       headers: {
@@ -271,11 +269,10 @@ export const gradientPromptCache = new GradientPromptCacheService();
 // ============================================
 
 import { createHash } from 'node:crypto';
-import { eq, and, gt, lt, desc } from 'drizzle-orm';
+import { eq, and, gt, lt, sql } from 'drizzle-orm';
 import { getDb } from '../db/connection.js';
 import { promptCache } from '../db/schema.js';
 import { embeddingService } from './embedding.service.js';
-import { logger } from '../utils/logger.js';
 
 export interface SemanticCacheEntry {
   id: string;
@@ -309,6 +306,129 @@ export interface SemanticCacheStats {
 const DEFAULT_SIMILARITY_THRESHOLD = 0.85;
 const DEFAULT_CACHE_TTL_DAYS = 30;
 const DEFAULT_LIMIT = 5;
+const CACHE_STRICT_SIMILARITY = 0.9;
+const CACHE_GENERAL_MAX_AGE_DAYS = 7;
+const CACHE_FAST_MOVING_MAX_AGE_HOURS = 24;
+const CACHE_HARD_MAX_AGE_DAYS = 14;
+const CACHE_MIN_RECENT_SOURCE_RATIO = 0.35;
+const CACHE_MIN_SOURCE_COUNT = 12;
+const CACHE_MIN_DOMAIN_COUNT = 5;
+const CACHE_MIN_COMPLETENESS_SCORE = 0.85;
+
+function isFastMovingQuery(query: string): boolean {
+  const normalizedQuery = query.toLowerCase();
+  const fastMovingKeywords = [
+    'today',
+    'current',
+    'latest',
+    'now',
+    'earnings',
+    'guidance',
+    'quarter',
+    'price target',
+    'upgrade',
+    'downgrade',
+  ];
+
+  return fastMovingKeywords.some((keyword) => normalizedQuery.includes(keyword));
+}
+
+function calculateAgeHours(date: Date): number {
+  return (Date.now() - date.getTime()) / (1000 * 60 * 60);
+}
+
+function extractNumber(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): number | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const value = metadata[key];
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+}
+
+function evaluateCacheQuality(
+  entry: SemanticCacheEntry
+): { eligible: boolean; reason: string; freshnessScore: number } {
+  const ageHours = calculateAgeHours(entry.createdAt);
+  const ageDays = ageHours / 24;
+
+  if (ageDays > CACHE_HARD_MAX_AGE_DAYS) {
+    return { eligible: false, reason: 'hard_max_age_exceeded', freshnessScore: 0 };
+  }
+
+  const sourceCount = extractNumber(entry.responseMetadata, 'sourceCount');
+  if (sourceCount !== undefined && sourceCount < CACHE_MIN_SOURCE_COUNT) {
+    return { eligible: false, reason: 'source_count_below_minimum', freshnessScore: 0 };
+  }
+
+  const domainCount = extractNumber(entry.responseMetadata, 'domainCount');
+  if (domainCount !== undefined && domainCount < CACHE_MIN_DOMAIN_COUNT) {
+    return { eligible: false, reason: 'domain_count_below_minimum', freshnessScore: 0 };
+  }
+
+  const completenessScore = extractNumber(entry.responseMetadata, 'completenessScore');
+  if (completenessScore !== undefined && completenessScore < CACHE_MIN_COMPLETENESS_SCORE) {
+    return { eligible: false, reason: 'completeness_below_minimum', freshnessScore: 0 };
+  }
+
+  const recentSourceRatio = extractNumber(entry.responseMetadata, 'recentSourceRatio');
+  if (recentSourceRatio !== undefined && recentSourceRatio < CACHE_MIN_RECENT_SOURCE_RATIO) {
+    return { eligible: false, reason: 'recent_source_ratio_below_minimum', freshnessScore: 0 };
+  }
+
+  const decayScore = Math.max(0, 1 - ageDays / CACHE_HARD_MAX_AGE_DAYS);
+  const recentBoost = recentSourceRatio !== undefined
+    ? Math.min(0.25, Math.max(0, recentSourceRatio) * 0.25)
+    : 0;
+  const freshnessScore = Math.min(1, decayScore + recentBoost);
+
+  return { eligible: true, reason: 'eligible', freshnessScore };
+}
+
+function parseMetadata(metadata: unknown): Record<string, unknown> | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  if (typeof metadata === 'object' && !Array.isArray(metadata)) {
+    return metadata as Record<string, unknown>;
+  }
+
+  if (typeof metadata === 'string') {
+    try {
+      const parsed = JSON.parse(metadata);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
+
+function toDate(value: unknown): Date {
+  if (value instanceof Date) {
+    return value;
+  }
+
+  return new Date(String(value));
+}
 
 function normalizeQueryForHash(query: string): string {
   return query
@@ -321,36 +441,6 @@ function normalizeQueryForHash(query: string): string {
 function hashQuery(query: string): string {
   const normalized = normalizeQueryForHash(query);
   return createHash('sha256').update(normalized).digest('hex');
-}
-
-function embeddingToString(embedding: number[]): string {
-  return JSON.stringify(embedding);
-}
-
-function stringToEmbedding(str: string): number[] {
-  try {
-    return JSON.parse(str);
-  } catch {
-    return [];
-  }
-}
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length || a.length === 0) return 0;
-  
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-  
-  for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  
-  if (normA === 0 || normB === 0) return 0;
-  
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
 export class SemanticPromptCacheService {
@@ -383,7 +473,7 @@ export class SemanticPromptCacheService {
     try {
       const queryEmbedding = await embeddingService.embedQuery(query);
       
-      if (!queryEmbedding) {
+      if (!queryEmbedding || queryEmbedding.length === 0) {
         logger.warn('Failed to generate embedding for cache search');
         return null;
       }
@@ -405,52 +495,119 @@ export class SemanticPromptCacheService {
         LIMIT $3
       `;
       
-      const results = await db.execute(
+      const results = await (db as any).execute(
         sql,
-        [embeddingStr, userId || null, limit * 2]
+        [embeddingStr, userId || null, limit * 4]
       ) as any[];
 
       let bestMatch: SemanticCacheEntry | null = null;
       let bestSimilarity = 0;
+      let bestEffectiveScore = -1;
+      const fastMovingQuery = isFastMovingQuery(query);
 
       for (const entry of results) {
         const similarity = entry.similarity || 0;
-        
-        if (similarity >= similarityThreshold && similarity > bestSimilarity) {
-          let contextMatch = true;
-          let focusAreasMatch = true;
 
-          if (context && entry.context) {
-            const entryContextKeys = Object.keys(entry.context);
-            const searchContextKeys = Object.keys(context);
-            contextMatch = entryContextKeys.some(key => 
-              searchContextKeys.includes(key) && 
-              entry.context[key] === context[key]
-            );
-          }
+        if (similarity < similarityThreshold) {
+          logger.debug(
+            { cacheId: entry.id, similarity, similarityThreshold },
+            'Semantic cache candidate rejected: similarity below threshold'
+          );
+          continue;
+        }
 
-          if (focusAreas && entry.focusAreas) {
-            const searchAreas = new Set(focusAreas.map(a => a.toLowerCase()));
-            const entryAreas = new Set(entry.focusAreas.map((a: string) => a.toLowerCase()));
-            const intersection = [...searchAreas].filter(a => entryAreas.has(a));
-            focusAreasMatch = intersection.length >= Math.min(focusAreas.length, entry.focusAreas.length) * 0.5;
-          }
+        const candidate: SemanticCacheEntry = {
+          id: entry.id,
+          queryText: entry.queryText,
+          responseText: entry.responseText,
+          responseMetadata: parseMetadata(entry.responseMetadata),
+          context: entry.context,
+          focusAreas: entry.focusAreas,
+          hitCount: entry.hitCount,
+          lastHitAt: entry.lastHitAt ? toDate(entry.lastHitAt) : null,
+          createdAt: toDate(entry.createdAt),
+          similarity,
+        };
 
-          if (contextMatch && focusAreasMatch) {
-            bestSimilarity = similarity;
-            bestMatch = {
-              id: entry.id,
-              queryText: entry.queryText,
-              responseText: entry.responseText,
-              responseMetadata: entry.responseMetadata,
-              context: entry.context,
-              focusAreas: entry.focusAreas,
-              hitCount: entry.hitCount,
-              lastHitAt: entry.lastHitAt,
-              createdAt: entry.createdAt,
+        let contextMatch = true;
+        let focusAreasMatch = true;
+
+        if (context && candidate.context) {
+          const entryContextKeys = Object.keys(candidate.context);
+          const searchContextKeys = Object.keys(context);
+          contextMatch = entryContextKeys.some((key) =>
+            searchContextKeys.includes(key) &&
+            candidate.context?.[key] === context[key]
+          );
+        }
+
+        if (focusAreas && candidate.focusAreas) {
+          const searchAreas = new Set(focusAreas.map((a) => a.toLowerCase()));
+          const entryAreas = new Set(candidate.focusAreas.map((a: string) => a.toLowerCase()));
+          const intersection = [...searchAreas].filter((a) => entryAreas.has(a));
+          focusAreasMatch =
+            intersection.length >= Math.min(focusAreas.length, candidate.focusAreas.length) * 0.5;
+        }
+
+        if (!contextMatch || !focusAreasMatch) {
+          logger.debug(
+            {
+              cacheId: candidate.id,
+              contextMatch,
+              focusAreasMatch,
+            },
+            'Semantic cache candidate rejected: context/focus mismatch'
+          );
+          continue;
+        }
+
+        const ageHours = calculateAgeHours(candidate.createdAt);
+        const ageDays = ageHours / 24;
+
+        if (fastMovingQuery && ageHours > CACHE_FAST_MOVING_MAX_AGE_HOURS) {
+          logger.info(
+            {
+              cacheId: candidate.id,
+              ageHours,
+              maxAgeHours: CACHE_FAST_MOVING_MAX_AGE_HOURS,
+            },
+            'Semantic cache candidate rejected: fast-moving freshness window exceeded'
+          );
+          continue;
+        }
+
+        const quality = evaluateCacheQuality(candidate);
+        if (!quality.eligible) {
+          logger.info(
+            {
+              cacheId: candidate.id,
+              reason: quality.reason,
+              ageDays,
+            },
+            'Semantic cache candidate rejected: quality gate failed'
+          );
+          continue;
+        }
+
+        if (ageDays > CACHE_GENERAL_MAX_AGE_DAYS && similarity < CACHE_STRICT_SIMILARITY) {
+          logger.debug(
+            {
+              cacheId: candidate.id,
+              ageDays,
               similarity,
-            };
-          }
+              strictSimilarity: CACHE_STRICT_SIMILARITY,
+            },
+            'Semantic cache candidate rejected: general freshness window exceeded'
+          );
+          continue;
+        }
+
+        const effectiveScore = similarity * 0.7 + quality.freshnessScore * 0.3;
+
+        if (effectiveScore > bestEffectiveScore) {
+          bestEffectiveScore = effectiveScore;
+          bestSimilarity = similarity;
+          bestMatch = candidate;
         }
       }
 
@@ -458,7 +615,8 @@ export class SemanticPromptCacheService {
         await this.recordHit(bestMatch.id);
         logger.info({ 
           query: query.substring(0, 50), 
-          similarity: bestSimilarity 
+          similarity: bestSimilarity,
+          effectiveScore: bestEffectiveScore,
         }, 'Semantic cache hit (pgvector)');
       }
 
@@ -488,10 +646,33 @@ export class SemanticPromptCacheService {
       ttlDays = this.cacheTTLDays,
     } = options;
 
+    const sourceCount = extractNumber(responseMetadata, 'sourceCount');
+    const domainCount = extractNumber(responseMetadata, 'domainCount');
+    const completenessScore = extractNumber(responseMetadata, 'completenessScore');
+    const recentSourceRatio = extractNumber(responseMetadata, 'recentSourceRatio');
+
+    if (
+      (sourceCount !== undefined && sourceCount < CACHE_MIN_SOURCE_COUNT) ||
+      (domainCount !== undefined && domainCount < CACHE_MIN_DOMAIN_COUNT) ||
+      (completenessScore !== undefined && completenessScore < CACHE_MIN_COMPLETENESS_SCORE) ||
+      (recentSourceRatio !== undefined && recentSourceRatio < CACHE_MIN_RECENT_SOURCE_RATIO)
+    ) {
+      logger.info(
+        {
+          sourceCount,
+          domainCount,
+          completenessScore,
+          recentSourceRatio,
+        },
+        'Skipping semantic cache write due to quality thresholds',
+      );
+      return null;
+    }
+
     try {
       const queryEmbedding = await embeddingService.embedQuery(query);
       
-      if (!queryEmbedding) {
+      if (!queryEmbedding || queryEmbedding.length === 0) {
         logger.warn('Failed to generate embedding for cache, skipping');
         return null;
       }
@@ -530,7 +711,7 @@ export class SemanticPromptCacheService {
     await db
       .update(promptCache)
       .set({
-        hitCount: promptCache.hitCount + 1,
+        hitCount: sql`${promptCache.hitCount} + 1`,
         lastHitAt: new Date(),
         updatedAt: new Date(),
       })

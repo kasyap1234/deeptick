@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   Send,
   Loader2,
@@ -11,15 +11,14 @@ import {
   ChevronLeft,
   MoreVertical,
   Trash2,
-  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,7 +27,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Message, Conversation, StreamChunk } from "@/lib/types";
+import type { Message, Conversation } from "@/lib/types";
 
 interface ChatMessageProps {
   message: Message;
@@ -93,7 +92,7 @@ function ChatMessage({ message, isStreaming }: ChatMessageProps) {
           </div>
         )}
 
-        <span className="text-[10px] text-muted-foreground px-1">
+        <span suppressHydrationWarning className="text-[10px] text-muted-foreground px-1">
           {new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </span>
       </div>
@@ -112,6 +111,7 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [streamingContent, setStreamingContent] = useState("");
+  const streamingContentRef = useRef("");
   const wsRef = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -131,8 +131,7 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
       wsRef.current.close();
     }
 
-    const wsUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/^http/, "ws") || "ws://localhost:3001";
-    const ws = new WebSocket(`${wsUrl}/ws/chat/${convId}`);
+    const ws = api.connectChatWebSocket(convId);
 
     ws.onopen = () => {
       console.log("Chat WebSocket connected");
@@ -142,7 +141,8 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
       const data: { type: string; content?: string; messageId?: string; isComplete?: boolean; sources?: Array<{ url: string; title: string }> } = JSON.parse(event.data);
 
       if (data.type === "stream_chunk") {
-        setStreamingContent((prev) => prev + (data.content || ""));
+        streamingContentRef.current += data.content || "";
+        setStreamingContent(streamingContentRef.current);
         scrollToBottom();
       } else if (data.type === "stream_complete") {
         if (data.content) {
@@ -150,11 +150,12 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
             id: data.messageId || crypto.randomUUID(),
             conversationId: convId,
             role: "assistant",
-            content: streamingContent + (data.content || ""),
+            content: streamingContentRef.current + (data.content || ""),
             sources: data.sources,
             createdAt: new Date().toISOString(),
           };
           setMessages((prev) => [...prev, newMessage]);
+          streamingContentRef.current = "";
           setStreamingContent("");
         }
         setIsLoading(false);
@@ -174,7 +175,7 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
     };
 
     wsRef.current = ws;
-  }, [streamingContent, scrollToBottom]);
+  }, [scrollToBottom]);
 
   useEffect(() => {
     if (conversationId) {
@@ -190,8 +191,7 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
 
   const fetchConversation = async (id: string) => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/api/chat/conversations/${id}`);
-      const data = await response.json();
+      const data = await api.getConversation(id);
       if (data.success) {
         setConversation(data.data);
       }
@@ -202,8 +202,7 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
 
   const fetchMessages = async (id: string) => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/api/chat/conversations/${id}/messages`);
-      const data = await response.json();
+      const data = await api.getMessages(id);
       if (data.success) {
         setMessages(data.data);
       }
@@ -232,13 +231,8 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
       wsRef.current.send(JSON.stringify({ content: userMessage.content }));
     } else {
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/api/chat/conversations/${conversationId}/messages`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: userMessage.content }),
-        });
-        const data = await response.json();
-        if (data.success) {
+        const data = await api.sendMessage(conversationId, userMessage.content);
+        if (data.success && data.data) {
           const assistantMessage: Message = {
             id: data.data.messageId,
             conversationId,
@@ -267,9 +261,7 @@ export function ChatInterface({ conversationId, onBack }: ChatInterfaceProps) {
   const handleDelete = async () => {
     if (!conversationId) return;
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/api/chat/conversations/${conversationId}`, {
-        method: "DELETE",
-      });
+      await api.deleteConversation(conversationId);
       onBack?.();
     } catch (error) {
       console.error("Failed to delete conversation:", error);

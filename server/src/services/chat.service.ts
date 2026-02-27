@@ -1,5 +1,5 @@
 import { ChatOpenAI } from '@langchain/openai';
-import { config } from '../config/index.js';
+import { config, normalizeModelForOpenAICompatible } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 
 export class ChatService {
@@ -8,31 +8,16 @@ export class ChatService {
   private getModel(): ChatOpenAI | null {
     if (this.model) return this.model;
 
-    if (config.openaiApiKey) {
-      this.model = new ChatOpenAI({
-        model: 'gpt-4o',
-        apiKey: config.openaiApiKey,
-        temperature: 0.7,
-      });
-    } else if (config.anthropicApiKey) {
-      this.model = new ChatOpenAI({
-        model: 'claude-sonnet-4-20250514',
-        apiKey: config.anthropicApiKey,
-        configuration: {
-          baseURL: 'https://api.anthropic.com',
-        },
-        temperature: 0.7,
-      });
-    } else if (config.DO_GENAI_API_KEY) {
-      this.model = new ChatOpenAI({
-        model: config.deepResearch.orchestratorModel,
-        apiKey: config.DO_GENAI_API_KEY,
-        configuration: {
-          baseURL: config.DO_GENAI_ENDPOINT,
-        },
-        temperature: 0.7,
-      });
-    }
+    if (!config.DO_GENAI_API_KEY) return null;
+
+    this.model = new ChatOpenAI({
+      model: normalizeModelForOpenAICompatible(config.deepResearch.orchestratorModel),
+      apiKey: config.DO_GENAI_API_KEY,
+      configuration: {
+        baseURL: config.DO_GENAI_ENDPOINT,
+      },
+      temperature: 0.7,
+    });
 
     return this.model;
   }
@@ -54,7 +39,11 @@ export class ChatService {
         { role: 'user', content: userMessage },
       ];
 
-      const response = await model.invoke(messages);
+      const invokePromise = model.invoke(messages);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Chat LLM invoke timed out after 60s')), 60_000)
+      );
+      const response = await Promise.race([invokePromise, timeoutPromise]);
       return response.content as string;
     } catch (error) {
       logger.error({ error }, 'Failed to generate chat response');
@@ -67,17 +56,17 @@ export class ChatService {
     
     if (lowerMessage.includes('stock') || lowerMessage.includes('share') || lowerMessage.includes('price')) {
       return "I'm ready to help you with stock research! Unfortunately, my AI capabilities are currently unavailable due to configuration issues. " +
-        "To enable AI-powered responses, please configure a valid LLM API key (OpenAI, Anthropic, or DigitalOcean GenAI) in the server environment variables. " +
+        "To enable AI-powered responses, please configure DO_GENAI_API_KEY in the server environment variables. " +
         "You can also use the Research feature to get comprehensive stock analysis reports.";
     }
     
     if (lowerMessage.includes('hello') || lowerMessage.includes('hi') || lowerMessage.includes('hey')) {
       return "Hello! I'm your stock research assistant. I can help you analyze stocks, discuss investment ideas, and answer questions about the market. " +
-        "Unfortunately, my AI capabilities are currently unavailable. Please configure a valid LLM API key to enable full functionality.";
+        "Unfortunately, my AI capabilities are currently unavailable. Please configure DO_GENAI_API_KEY to enable full functionality.";
     }
     
     return "Thank you for your message! I'm currently operating in limited mode because the AI service isn't configured. " +
-      "To enable full functionality, please configure a valid LLM API key (OpenAI, Anthropic, or DigitalOcean GenAI) in the server's environment variables. " +
+      "To enable full functionality, please configure DO_GENAI_API_KEY in the server's environment variables. " +
       "In the meantime, you can still use the Research feature to get detailed stock analysis reports.";
   }
 
@@ -101,10 +90,16 @@ export class ChatService {
         { role: 'user', content: userMessage },
       ];
 
-      const stream = await model.stream(messages);
-      
-      for await (const chunk of stream) {
-        yield chunk.content as string;
+      const controller = new AbortController();
+      const streamTimeout = setTimeout(() => controller.abort(), 120_000);
+      try {
+        const stream = await model.stream(messages, { signal: controller.signal });
+
+        for await (const chunk of stream) {
+          yield chunk.content as string;
+        }
+      } finally {
+        clearTimeout(streamTimeout);
       }
     } catch (error) {
       logger.error({ error }, 'Failed to stream chat response');

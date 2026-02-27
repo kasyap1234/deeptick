@@ -1,62 +1,78 @@
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { createDeepAgent, FilesystemBackend } from 'deepagents';
-import { ChatOpenAI } from '@langchain/openai';
-import { config, normalizeModelForOpenAICompatible } from '../../config/index.js';
+import { config } from '../../config/index.js';
 import { exaSearchTool, exaFindSimilarTool } from '../../tools/exa-tools.js';
 import { tools as context7Tools } from '../../tools/context7-tools.js';
 import { tools as yahooTools } from '../../tools/yahoo-finance-tools.js';
 import { subagents } from '../../subagents/index.js';
 import { createResearchTools } from '../research-tools.service.js';
 import { guardrailsService } from '../guardrails.service.js';
+import { createDigitalOceanChatModel } from './model-factory.js';
 
 function buildSupervisorPrompt(): string {
   const today = new Date().toISOString().split('T')[0];
   const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const currentFY = new Date().getFullYear() + (new Date().getMonth() >= 3 ? 1 : 0);
 
-  return `You are an institutional-grade equity research orchestrator for retail investors.
+  return `You are the DeepTick equity research supervisor.
 
-Today's date: ${today}. Use FY${currentFY} and current quarter references. When searching for recent data, prioritize content from the last 90 days (since ${ninetyDaysAgo}).
+Date: ${today}. Prioritize recent evidence from ${ninetyDaysAgo} onward. Use FY${currentFY} and current-quarter framing.
 
-MISSION:
-Produce a comprehensive, evidence-backed investment report that matches institutional research depth.
+Goals:
+- Produce an evidence-backed institutional-style report that DIRECTLY answers whether the stock is a good investment RIGHT NOW.
+- Keep execution efficient and avoid unnecessary tool calls.
+- Ensure ALL report sections are populated with substantive, current data — no empty sections.
 
-NON-NEGOTIABLE RULES:
-- Use Exa tools for ALL external web research.
-- Use get_stock_info to get real-time stock prices and trading data.
-- Use search_financial_news to get the latest news about companies.
-- Use get_financial_statements to retrieve income statements, balance sheets, and cash flow data.
-- Use get_technical_indicators for technical analysis (SMA, EMA, RSI, MACD, Bollinger Bands).
-- Use write_todos to plan and track progress.
-- Use the task tool to delegate complex work to specialist subagents.
-- Parallelize independent subagent tasks to improve coverage.
-- Collect broad and diverse evidence before concluding.
-- Every material numerical claim must be tied to source URLs.
+Required behavior:
+- Use exa_search/exa_find_similar for web evidence. Always filter for recent dates (startPublishedDate=${ninetyDaysAgo}).
+- Use yahoo_quote/yahoo_fundamentals FIRST to get the current stock price and latest fundamentals.
+- Use task exactly once per specialist area, then reconcile and finalize.
+- Cite URLs for every material numeric claim.
+- Always include today's stock price, latest quarterly results, and current analyst consensus.
 
-RESEARCH DEPTH TARGETS:
-- At least 80 unique sources
-- At least 12 unique domains
-- At least 25 sources from the last 90 days (i.e., since ${ninetyDaysAgo})
-- At least 2 independent citations for each material numerical claim
+Coverage targets:
+- >=18 unique sources
+- >=6 unique domains
+- >=6 recent sources (last 90 days)
 
-WORKFLOW:
-1) Planning: create detailed todo list and wave plan.
-2) Delegation: assign specialized subagents with clear output expectations.
-3) Reconciliation: merge outputs and identify evidence gaps.
-4) Gap closure: run additional Exa searches until thresholds are met.
-5) Audit: run compliance-auditor-agent and resolve findings.
-6) Finalization: write both final_report.md and final_report.json.
+Workflow:
+1) plan briefly (write_todos)
+2) delegate to subagents
+3) reconcile and close only critical gaps — verify EVERY section has content
+4) run evidence-and-audit-agent
+5) write final_report.md and final_report.json
 
-FINAL OUTPUT FORMAT REQUIREMENTS:
-- final_report.json must contain all report sections and an evidenceIndex.
-- Include an auditReport block with pass/fail/caveats.
-- Use concise, testable claims, not vague statements.
+Pre-finalization checks (MANDATORY):
+- You MUST call thesis-and-catalysts-agent before writing final_report.json.
+- Bull and bear sections must be distinct, evidence-backed, and each include quantified claims with dates.
+- If any required section is weak or missing, run one focused gap-fill search and update that section before finalization.
 
-SAFETY:
-- Never provide investment advice. Present information objectively.
-- Include appropriate disclaimers about investment risks.
-- Flag any conflicts of interest.`;
+CRITICAL — final_report.json MUST conform to this exact schema with ALL fields populated:
+{
+  "executiveSummary": "string — overall investment thesis with clear BUY/HOLD/SELL stance",
+  "companySnapshot": "string — company overview, market cap, sector, key products",
+  "industryAndMarketStructure": "string — TAM/SAM, industry dynamics, macro context",
+  "businessModelAndUnitEconomics": "string — revenue model, margins, pricing power",
+  "financialQualityAndTrendAnalysis": "string — quarterly trends, earnings quality, cash flow",
+  "capitalAllocationReview": "string — dividends, buybacks, M&A, ROIC",
+  "valuationRelative": "string — peer multiples, relative positioning",
+  "valuationIntrinsic": "string — DCF, fair value range, upside/downside",
+  "competitivePositionAndMoat": "string — market share, moat durability, threats",
+  "managementGovernanceAssessment": "string — leadership quality, alignment, governance",
+  "regulatoryAndLegalRisk": "string — regulatory exposure, litigation, policy impact",
+  "bullCase": "string — detailed bull thesis with quantified targets",
+  "bearCase": "string — detailed bear thesis with downside scenarios",
+  "scenarioFramework": [{"label":"string","assumptions":["string"],"implications":["string"]}],
+  "catalystCalendar": "string — upcoming events that could move the stock",
+  "portfolioConstructionView": "string — sizing, risk budget, entry/exit levels",
+  "investmentConclusion": "string — final verdict answering the user's question directly",
+  "evidenceIndex": [{"claim":"string","citations":["url"]}],
+  "auditReport": {"status":"pass|pass_with_caveats|fail","checkedClaims":0,"unresolvedClaims":[],"notes":[]},
+  "sources": [{"url":"string","title":"string"}]
+}
+
+Every string field MUST contain substantive content (not "No section generated."). If data is unavailable, state what was searched and why it was not found.`;
 }
 
 export interface AgentFactoryResult {
@@ -84,35 +100,14 @@ export async function createResearchAgent(jobId: string, guardrailsInput: string
     virtualMode: true,
   });
 
-  let model: ChatOpenAI;
-
-  if (config.openaiApiKey) {
-    model = new ChatOpenAI({
-      model: 'gpt-4o',
-      apiKey: config.openaiApiKey,
-    });
-  } else if (config.anthropicApiKey) {
-    model = new ChatOpenAI({
-      model: 'claude-sonnet-4-20250514',
-      apiKey: config.anthropicApiKey,
-      configuration: {
-        baseURL: 'https://api.anthropic.com',
-      },
-    });
-  } else if (config.DO_GENAI_API_KEY) {
-    model = new ChatOpenAI({
-      model: normalizeModelForOpenAICompatible(config.deepResearch.orchestratorModel),
-      apiKey: config.DO_GENAI_API_KEY,
-      configuration: {
-        baseURL: config.DO_GENAI_ENDPOINT,
-        defaultHeaders: {
-          'Authorization': `Bearer ${config.DO_GENAI_API_KEY}`,
-        },
-      },
-    });
-  } else {
-    throw new Error('No LLM provider configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or DO_GENAI_API_KEY.');
-  }
+  const model = createDigitalOceanChatModel(config.deepResearch.orchestratorModel, {
+    maxRetries: 1,
+    maxConcurrency: 1,
+    maxTokens: 8192,
+    timeoutMs: 90_000,
+    minRequestGapMs: 1500,
+    rateLimitRetries: 4,
+  });
 
   const modelConfig = {
     orchestrator: config.deepResearch.orchestratorModel,
@@ -123,7 +118,13 @@ export async function createResearchAgent(jobId: string, guardrailsInput: string
   const agent = createDeepAgent({
     model,
     systemPrompt: buildSupervisorPrompt(),
-    tools: [exaSearchTool, exaFindSimilarTool, ...createResearchTools(), ...context7Tools, ...yahooTools],
+    tools: [
+      exaSearchTool,
+      exaFindSimilarTool,
+      ...(config.alphaVantageApiKey ? createResearchTools() : []),
+      ...context7Tools,
+      ...yahooTools,
+    ],
     subagents,
     backend,
   });

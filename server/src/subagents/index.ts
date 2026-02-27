@@ -1,7 +1,9 @@
 import type { SubAgent } from 'deepagents';
-import { ChatOpenAI } from '@langchain/openai';
+import type { StructuredTool } from '@langchain/core/tools';
+import type { LanguageModelLike } from '@langchain/core/language_models/base';
 import { exaSearchTool, exaFindSimilarTool } from '../tools/exa-tools.js';
-import { config, normalizeModelForOpenAICompatible } from '../config/index.js';
+import { config } from '../config/index.js';
+import { createDigitalOceanChatModel } from '../services/deep-research/model-factory.js';
 
 type SubAgentSpec = {
   name: string;
@@ -10,215 +12,172 @@ type SubAgentSpec = {
   outputFile: string;
   useSimilarityTool?: boolean;
   model?: string;
+  reportSections?: string[];
 };
 
-function createSubagentModel(spec: SubAgentSpec): ChatOpenAI {
-  const rawModel = spec.model ?? config.deepResearch.subagentModel;
+// Custom DigitalOcean model names (e.g. "openai-gpt-oss-120b") can't be
+// auto-inferred by deepagents, so we pass ChatOpenAI instances directly.
+// Cast to LanguageModelLike to bridge the duplicate @langchain/core types.
+const sharedModelCache = new Map<string, LanguageModelLike>();
 
-  if (config.openaiApiKey) {
-    return new ChatOpenAI({
-      model: 'gpt-4o',
-      apiKey: config.openaiApiKey,
-    });
-  }
+function getSubagentModel(spec: SubAgentSpec): LanguageModelLike {
+  const modelId = spec.model ?? config.deepResearch.subagentModel;
+  const cached = sharedModelCache.get(modelId);
+  if (cached) return cached;
 
-  if (config.anthropicApiKey) {
-    return new ChatOpenAI({
-      model: rawModel,
-      apiKey: config.anthropicApiKey,
-      configuration: { baseURL: 'https://api.anthropic.com' },
-    });
-  }
+  const instance = createDigitalOceanChatModel(modelId, {
+    maxRetries: 1,
+    maxConcurrency: 1,
+    maxTokens: 4096,
+    timeoutMs: 60_000,
+    minRequestGapMs: 1500,
+    rateLimitRetries: 4,
+  }) as unknown as LanguageModelLike;
 
-  if (config.DO_GENAI_API_KEY) {
-    return new ChatOpenAI({
-      model: normalizeModelForOpenAICompatible(rawModel),
-      apiKey: config.DO_GENAI_API_KEY,
-      configuration: {
-        baseURL: config.DO_GENAI_ENDPOINT,
-        defaultHeaders: { Authorization: `Bearer ${config.DO_GENAI_API_KEY}` },
-      },
-    });
-  }
-
-  // Fallback: create with raw model string
-  return new ChatOpenAI({ model: rawModel });
+  sharedModelCache.set(modelId, instance);
+  return instance;
 }
 
 function buildSubagent(spec: SubAgentSpec): SubAgent {
-  const tools = (spec.useSimilarityTool ? [exaSearchTool, exaFindSimilarTool] : [exaSearchTool]) as any;
+  // Cast needed: project's @langchain/core types conflict with deepagents'
+  // bundled @langchain/core types (duplicate package issue).
+  const tools = (spec.useSimilarityTool
+    ? [exaSearchTool, exaFindSimilarTool]
+    : [exaSearchTool]) as unknown as StructuredTool[];
   const today = new Date().toISOString().split('T')[0];
   const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const currentFY = new Date().getFullYear() + (new Date().getMonth() >= 3 ? 1 : 0);
+  const requiresThesisSplit =
+    spec.reportSections?.includes('bullCase') || spec.reportSections?.includes('bearCase');
 
   return {
     name: spec.name,
     description: spec.description,
-    model: createSubagentModel(spec),
+    model: getSubagentModel(spec),
     tools,
-    systemPrompt: `You are ${spec.name}, a specialist in institutional equity research.
+    systemPrompt: `You are ${spec.name}, a specialist subagent for institutional-grade equity research.
 
-Today's date: ${today}. When searching for recent data, prioritize content from the last 90 days (since ${ninetyDaysAgo}). Use FY${currentFY} and current quarter references relative to today.
+Date: ${today}. Use FY${currentFY}/current-quarter framing and strongly prioritize sources from ${ninetyDaysAgo} onward. Always search for the LATEST data — do not rely on older figures when newer ones exist.
 
-MANDATORY RULES:
-- Use Exa tools for all web research.
-- Collect broad coverage and include both bull and bear evidence.
-- Extract concrete data points and cite source URLs inline with 'Source: <url>'.
-- Keep output concise but information-dense.
+Task:
+- Cover the focus areas below THOROUGHLY with quantified, up-to-date data.
+- Run up to 8 targeted Exa searches. Prefer recent-date filters (startPublishedDate=${ninetyDaysAgo}).
+- Write DETAILED analysis (at least 300 words per focus area) with specific numbers, dates, and source citations.
+- Do NOT summarize — provide in-depth coverage with quantified claims.
+- Include both bull and bear evidence where relevant.
+- Cite every material claim as 'Source: <url>'.
+- Always include the CURRENT stock price and latest quarterly financials.
 
-FOCUS AREAS:
+Focus areas:
 ${spec.focus.map((item) => `- ${item}`).join('\n')}
 
-OUTPUT:
-- Write your findings to ${spec.outputFile}
-- Include: key findings, quantified evidence, uncertainties, and a source list.`,
-  } as SubAgent;
+${spec.reportSections ? `Report sections this output maps to:\n${spec.reportSections.map((s) => `- ${s}`).join('\n')}\nStructure your output with clear headings matching these sections.` : ''}
+
+${requiresThesisSplit ? 'MANDATORY: Provide distinct `## Bull Case` and `## Bear Case` sections with non-overlapping drivers, quantified targets/downside, and dated citations for each claim.' : ''}
+
+Output:
+- Write detailed, data-rich findings to ${spec.outputFile}.
+- Include key facts, quantified evidence (with dates), uncertainties, and a comprehensive source list.
+- Every number must have a source URL and date.`,
+  };
 }
 
 const subagentSpecs: SubAgentSpec[] = [
   {
-    name: 'market-size-structure-agent',
-    description: 'Assesses TAM/SAM/SOM, industry concentration, and structural market dynamics.',
-    focus: ['TAM/SAM/SOM estimates', 'Market growth and demand drivers', 'Industry concentration and structure'],
-    outputFile: 'subagents/market_size_structure.md',
+    name: 'market-and-industry-agent',
+    description: 'Assesses TAM/SAM/SOM, industry structure, economic cycle sensitivity, and macro regime dynamics.',
+    focus: [
+      'TAM/SAM/SOM estimates and market growth drivers',
+      'Industry concentration and competitive structure',
+      'Cyclical exposure, rate/inflation sensitivity, and macro regime risks',
+    ],
+    outputFile: 'subagents/market_and_industry.md',
     useSimilarityTool: true,
+    reportSections: ['industryAndMarketStructure'],
   },
   {
-    name: 'industry-cycle-agent',
-    description: 'Analyzes economic cycle sensitivity and regime dependence.',
-    focus: ['Cyclical exposure', 'Rate/inflation sensitivity', 'Macro regime risks and tailwinds'],
-    outputFile: 'subagents/industry_cycle.md',
+    name: 'business-and-financials-agent',
+    description: 'Evaluates business model, unit economics, financial statements, earnings quality, and capital allocation.',
+    focus: [
+      'Company overview: headquarters, founding, key products/services, employee count, market cap',
+      'Revenue architecture, pricing power, and margin structure',
+      'Revenue/earnings trends (last 4-8 quarters), cash flow quality, and balance sheet resilience',
+      'Recurring vs non-recurring earnings and accrual quality',
+      'Capital allocation: buybacks, dividends, M&A, capex efficiency, and ROIC',
+      'Latest quarterly results with YoY and QoQ comparisons',
+    ],
+    outputFile: 'subagents/business_and_financials.md',
+    reportSections: ['companySnapshot', 'businessModelAndUnitEconomics', 'financialQualityAndTrendAnalysis', 'capitalAllocationReview'],
+    model: config.deepResearch.orchestratorModel, // Bucket 1: shares with orchestrator (openai-gpt-oss-20b)
   },
   {
-    name: 'business-model-agent',
-    description: 'Evaluates the business model, pricing power, and unit economics.',
-    focus: ['Revenue architecture', 'Pricing power and margin structure', 'Unit economics and scalability'],
-    outputFile: 'subagents/business_model.md',
-  },
-  {
-    name: 'financial-statements-agent',
-    description: 'Extracts and trends financial statement metrics.',
-    focus: ['Revenue and earnings trends', 'Cash flow quality', 'Balance sheet resilience'],
-    outputFile: 'subagents/financial_statements.md',
-  },
-  {
-    name: 'quality-of-earnings-agent',
-    description: 'Checks earnings quality, accruals, and accounting anomalies.',
-    focus: ['Recurring vs non-recurring earnings', 'Accrual quality', 'Accounting policy risks'],
-    outputFile: 'subagents/quality_of_earnings.md',
-  },
-  {
-    name: 'capital-allocation-agent',
-    description: 'Analyzes management capital allocation effectiveness.',
-    focus: ['Buybacks/dividends', 'M&A execution', 'Capex efficiency and ROIC'],
-    outputFile: 'subagents/capital_allocation.md',
-  },
-  {
-    name: 'valuation-multiples-agent',
-    description: 'Builds relative valuation and peer multiple context.',
-    focus: ['Peer set construction', 'Forward and trailing multiples', 'Historical valuation bands'],
-    outputFile: 'subagents/valuation_multiples.md',
-  },
-  {
-    name: 'valuation-intrinsic-agent',
-    description: 'Builds intrinsic valuation assumptions and ranges.',
-    focus: ['DCF inputs and sensitivity', 'Terminal assumptions', 'Range-based fair value framing'],
-    outputFile: 'subagents/valuation_intrinsic.md',
-  },
-  {
-    name: 'competitive-landscape-agent',
-    description: 'Maps competitive landscape and moat durability.',
-    focus: ['Market share and positioning', 'Moat sources and erosion risks', 'Switching costs and barriers to entry'],
-    outputFile: 'subagents/competitive_landscape.md',
+    name: 'valuation-agent',
+    description: 'Builds both relative and intrinsic valuation with peer multiples, DCF, and fair value ranges.',
+    focus: [
+      'Current stock price, 52-week range, and recent price action',
+      'Peer set construction and forward/trailing multiples',
+      'Historical valuation bands and relative positioning',
+      'DCF inputs, sensitivity analysis, and terminal assumptions',
+      'Range-based fair value framing with explicit upside/downside percentages',
+      'Consensus analyst target prices (latest broker notes within 90 days)',
+    ],
+    outputFile: 'subagents/valuation.md',
     useSimilarityTool: true,
+    reportSections: ['valuationRelative', 'valuationIntrinsic'],
+    model: config.deepResearch.orchestratorModel, // Bucket 1: shares with orchestrator (openai-gpt-oss-20b)
   },
   {
-    name: 'product-technology-agent',
-    description: 'Assesses product roadmap and technology disruption risk.',
-    focus: ['Product cadence and roadmap', 'Innovation tempo', 'Disruption vectors'],
-    outputFile: 'subagents/product_technology.md',
-  },
-  {
-    name: 'management-governance-agent',
-    description: 'Evaluates leadership quality and governance alignment.',
-    focus: ['Management execution track record', 'Compensation alignment', 'Governance concerns'],
-    outputFile: 'subagents/management_governance.md',
-  },
-  {
-    name: 'regulatory-legal-agent',
-    description: 'Researches legal, policy, and regulatory constraints.',
-    focus: ['Regulatory exposure', 'Litigation risk', 'Policy changes impacting economics'],
-    outputFile: 'subagents/regulatory_legal.md',
-  },
-  {
-    name: 'news-catalyst-agent',
-    description: 'Tracks near-term catalysts and event-driven risks.',
-    focus: ['Earnings and guidance events', 'Strategic announcements', 'Material sentiment shifts'],
-    outputFile: 'subagents/news_catalysts.md',
-  },
-  {
-    name: 'bull-thesis-agent',
-    description: 'Constructs upside thesis with quantified drivers.',
-    focus: ['Core upside drivers', 'Optionality vectors', 'Conditions for outperformance'],
-    outputFile: 'subagents/bull_thesis.md',
-  },
-  {
-    name: 'bear-thesis-agent',
-    description: 'Constructs downside thesis with impairment triggers.',
-    focus: ['Failure modes', 'Margin/value compression drivers', 'Conditions for underperformance'],
-    outputFile: 'subagents/bear_thesis.md',
-  },
-  {
-    name: 'portfolio-fit-agent',
-    description: 'Frames the position in a portfolio context.',
-    focus: ['Sizing logic', 'Risk budget implications', 'Correlation and hedging considerations'],
-    outputFile: 'subagents/portfolio_fit.md',
-  },
-  {
-    name: 'evidence-librarian-agent',
-    description: 'Consolidates, deduplicates, and organizes citations and evidence graph.',
-    focus: ['Source deduplication', 'Claim-to-source mapping', 'Domain diversity checks'],
-    outputFile: 'subagents/evidence_librarian.md',
+    name: 'competitive-and-strategic-agent',
+    description: 'Maps competitive landscape, moat durability, product roadmap, management quality, and governance.',
+    focus: [
+      'Market share, positioning, and moat sources/erosion risks',
+      'Product cadence, innovation tempo, and disruption vectors',
+      'Management execution track record and compensation alignment',
+      'Regulatory exposure, litigation risk, and policy impact',
+    ],
+    outputFile: 'subagents/competitive_and_strategic.md',
     useSimilarityTool: true,
+    reportSections: ['competitivePositionAndMoat', 'managementGovernanceAssessment', 'regulatoryAndLegalRisk'],
   },
   {
-    name: 'india-fii-dii-agent',
-    description: 'Analyzes Foreign Institutional Investor (FII) and Domestic Institutional Investor (DII) flows.',
-    focus: ['FII buying/selling patterns', 'DII activity and trends', 'Net investment flows by category', 'Impact on stock movements'],
-    outputFile: 'subagents/india_fii_dii.md',
+    name: 'thesis-and-catalysts-agent',
+    description: 'Constructs bull/bear theses, tracks catalysts, and frames portfolio positioning.',
+    focus: [
+      'Bull thesis: core upside drivers, optionality, conditions for outperformance',
+      'Bear thesis: failure modes, margin compression, impairment triggers',
+      'Near-term catalysts: earnings, guidance, strategic announcements, sentiment shifts',
+      'Portfolio fit: sizing logic, risk budget, correlation, and hedging',
+      'Explicit answer to "is this a good investment NOW?" with reasoning',
+    ],
+    outputFile: 'subagents/thesis_and_catalysts.md',
     useSimilarityTool: true,
+    reportSections: ['bullCase', 'bearCase', 'catalystCalendar', 'portfolioConstructionView'],
   },
   {
-    name: 'india-promoter-holdings-agent',
-    description: 'Tracks promoter holdings, pledges, and stakeholder changes.',
-    focus: ['Promoter shareholding percentage', 'Pledge status changes', 'Stakeholder activism', 'Related party transactions'],
-    outputFile: 'subagents/india_promoter_holdings.md',
-  },
-  {
-    name: 'india-sector-analysis-agent',
-    description: 'Analyzes sector performance, rotation, and thematic trends in Indian market.',
-    focus: ['Sector performance vs NIFTY', 'Sector rotation trends', 'Thematic opportunities', 'Sector correlations'],
-    outputFile: 'subagents/india_sector_analysis.md',
+    name: 'india-market-agent',
+    description: 'Analyzes India-specific factors: FII/DII flows, promoter holdings, sector trends, macro indicators, and stock screening.',
+    focus: [
+      'FII/DII buying/selling patterns and net investment flows',
+      'Promoter shareholding, pledge status, and related party transactions',
+      'Sector performance vs NIFTY, rotation trends, and thematic opportunities',
+      'GDP growth, inflation (CPI/WPI), RBI policy, USD/INR, commodity impact',
+      'Stock screening: valuation (P/E, P/B, EV/EBITDA), ROE/ROCE, debt, growth',
+    ],
+    outputFile: 'subagents/india_market.md',
     useSimilarityTool: true,
+    model: config.deepResearch.auditorModel, // Bucket 3: shares with auditor (deepseek-r1-distill-llama-70b)
   },
   {
-    name: 'india-macro-indicator-agent',
-    description: 'Tracks Indian macro indicators: GDP, inflation, RBI policy, currency, commodities.',
-    focus: ['GDP growth trends', 'Inflation (CPI/WPI)', 'RBI monetary policy', 'USD/INR currency', 'Commodity impact'],
-    outputFile: 'subagents/india_macro_indicators.md',
+    name: 'evidence-and-audit-agent',
+    description: 'Consolidates citations, deduplicates sources, and audits claims for sufficiency and consistency.',
+    focus: [
+      'Source deduplication and domain diversity checks',
+      'Claim-to-source mapping and evidence graph',
+      'Numerical claim verification and citation sufficiency',
+      'Unresolved contradiction identification',
+    ],
+    outputFile: 'subagents/evidence_and_audit.md',
     useSimilarityTool: true,
-  },
-  {
-    name: 'india-stock-screen-agent',
-    description: 'Screens Indian stocks using fundamental metrics (P/E, ROE, debt, growth).',
-    focus: ['Valuation metrics (P/E, P/B, EV/EBITDA)', 'Return ratios (ROE, ROCE)', 'Debt levels and coverage', 'Growth rates'],
-    outputFile: 'subagents/india_stock_screen.md',
-  },
-  {
-    name: 'compliance-auditor-agent',
-    description: 'Audits final claims for citation sufficiency and consistency.',
-    focus: ['Numerical claim verification', 'Citation sufficiency', 'Unresolved contradiction list'],
-    outputFile: 'subagents/compliance_audit.md',
     model: config.deepResearch.auditorModel,
   },
 ];

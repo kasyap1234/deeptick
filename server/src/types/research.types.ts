@@ -2,6 +2,18 @@ import { Type, type Static } from 'typebox';
 import { Value } from 'typebox/value';
 
 export type ResearchStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+export type ResearchFailureCode =
+  | 'auth_error'
+  | 'rate_limited'
+  | 'timeout'
+  | 'tool_budget_exceeded'
+  | 'subagent_budget_exceeded'
+  | 'recursion_limit_reached'
+  | 'provider_error'
+  | 'guardrails_blocked'
+  | 'insufficient_research_output'
+  | 'invalid_cached_report'
+  | 'unknown_error';
 
 export const ResearchSourceSchema = Type.Object({
   url: Type.String(),
@@ -100,6 +112,25 @@ export interface ResearchMetadata {
   gradientAgentId?: string;
   gradientKnowledgeBaseId?: string;
   useGradientNative?: boolean;
+  cached?: boolean;
+  cacheSource?: string;
+  cacheId?: string;
+  similarity?: number;
+  qualityMetrics?: {
+    completenessScore: number;
+    missingSections: string[];
+    weakSections: string[];
+    bullBearDistinct?: boolean;
+    bullBearOverlapScore?: number;
+  };
+  failureCode?: ResearchFailureCode;
+  failureStage?: string;
+  timedOutAt?: string;
+  budgetMetrics?: {
+    toolCalls: number;
+    subagentCalls: number;
+    elapsedMs: number;
+  };
 }
 
 export interface ResearchRequest {
@@ -115,6 +146,26 @@ export interface WebSocketMessage {
   jobId: string;
   payload: unknown;
   timestamp: Date;
+}
+
+export interface SubAgentActivity {
+  id: string;
+  name: string;
+  status: 'started' | 'running' | 'completed' | 'failed';
+  detail?: string;
+  timestamp: string;
+}
+
+export interface ProgressPayload {
+  stage: string;
+  status?: ResearchStatus;
+  expectedSubagents?: number;
+  completedSubagents?: number;
+  uniqueSources?: number;
+  domainCount?: number;
+  urls: string[];
+  reasoning: string[];
+  subAgentActivities: SubAgentActivity[];
 }
 
 export interface WebSocketLike {

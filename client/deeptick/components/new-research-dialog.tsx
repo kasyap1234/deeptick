@@ -2,10 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, X, Loader2, TrendingUp, Building2, DollarSign, Globe, Cloud, Cpu, Zap, Database } from "lucide-react";
+import { Sparkles, Loader2, TrendingUp, Building2, DollarSign, Globe, Cloud, Cpu, Zap, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -43,6 +42,15 @@ export function NewResearchDialog({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const isGradient = useGradient;
 
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      setContext("");
+      setFocusAreas([]);
+      setShowAdvanced(false);
+    }
+  }, [open]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
@@ -57,54 +65,54 @@ export function NewResearchDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl gradient-card border-border/50">
+      <DialogContent className="sm:max-w-2xl rounded-none border border-border bg-card shadow-none pt-8">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-xl">
+          <DialogTitle className="flex items-center gap-3 text-2xl font-serif text-foreground tracking-tight">
             {isGradient ? (
               <>
-                <Cloud className="h-5 w-5 text-cyan-500" />
-                <span>Gradient AI Research</span>
+                <Cloud className="h-6 w-6 text-cyan-600 dark:text-cyan-400" />
+                <span>INITIALIZE GRADIENT QUERY</span>
               </>
             ) : (
               <>
-                <Cpu className="h-5 w-5 text-violet-500" />
-                <span>Research Query</span>
+                <Cpu className="h-6 w-6 text-foreground" />
+                <span>INITIALIZE QUERY</span>
               </>
             )}
           </DialogTitle>
-          <DialogDescription className="flex items-center gap-2">
+          <DialogDescription className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground mt-2 border-b border-border pb-4">
             {isGradient ? (
               <span className="flex items-center gap-1.5">
-                <Zap className="h-3 w-3 text-cyan-500" />
-                Powered by Gradient AI Platform with Knowledge Bases
+                <Zap className="h-3 w-3 text-cyan-600 dark:text-cyan-400" />
+                SYSTEM: GRADIENT AI PLATFORM [ KNOWLEDGE BASES ACTIVE ]
               </span>
             ) : (
-              <span>Ask any investment research question using open source models.</span>
+              <span>SYSTEM: OPEN SOURCE MODELS [ INSTITUTIONAL ANALYSIS ]</span>
             )}
           </DialogDescription>
         </DialogHeader>
 
         {isGradient && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
-            className="flex items-center gap-2 p-3 rounded-lg bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border border-cyan-500/20"
+            className="flex items-center gap-3 p-3 bg-cyan-500/10 border-l-2 border-cyan-500"
           >
-            <div className="flex items-center gap-1.5">
-              <Database className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
-              <span className="text-xs font-medium text-cyan-700 dark:text-cyan-300">
-                Native Features
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4 text-cyan-700 dark:text-cyan-400" />
+              <span className="font-mono text-[10px] uppercase tracking-widest text-cyan-800 dark:text-cyan-300 font-bold">
+                NATIVE FEATURES LOADED
               </span>
             </div>
             <div className="flex-1" />
-            <div className="flex items-center gap-1">
-              <Badge variant="outline" className="text-[10px] h-5 bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300">
-                Gradient Agents
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="font-mono text-[9px] uppercase tracking-widest rounded-none border-cyan-500/30 text-cyan-800 dark:text-cyan-300 bg-transparent">
+                AGENTS
               </Badge>
-              <Badge variant="outline" className="text-[10px] h-5 bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300">
-                Knowledge Base
+              <Badge variant="outline" className="font-mono text-[9px] uppercase tracking-widest rounded-none border-cyan-500/30 text-cyan-800 dark:text-cyan-300 bg-transparent">
+                KNOWLEDGE BASE
               </Badge>
-              <Badge variant="outline" className="text-[10px] h-5 bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300">
+              <Badge variant="outline" className="font-mono text-[9px] uppercase tracking-widest rounded-none border-cyan-500/30 text-cyan-800 dark:text-cyan-300 bg-transparent">
                 RAG
               </Badge>
             </div>
@@ -112,9 +120,9 @@ export function NewResearchDialog({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6 mt-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Quick Prompts</label>
-            <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-3">
+            <label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">QUICK DOSSIER TEMPLATES</label>
+            <div className="grid grid-cols-2 gap-3">
               {quickPrompts.map((prompt, index) => (
                 <motion.button
                   key={index}
@@ -124,38 +132,39 @@ export function NewResearchDialog({
                   transition={{ delay: index * 0.05 }}
                   onClick={() => setQuery(prompt.label)}
                   className={cn(
-                    "flex items-center gap-2 p-3 text-sm text-left rounded-lg border border-border/50",
-                    "hover:border-primary/50 hover:bg-primary/5 transition-colors",
-                    query === prompt.label && "border-primary bg-primary/10"
+                    "flex items-center gap-3 p-3 text-xs font-mono tracking-wide text-left border border-border bg-card transition-colors rounded-none shadow-none",
+                    "hover:bg-muted/50 hover:border-primary/50",
+                    query === prompt.label && "border-primary bg-muted/80 text-foreground"
                   )}
                 >
-                  <prompt.icon className="h-4 w-4 text-primary shrink-0" />
+                  <prompt.icon className="h-4 w-4 text-foreground shrink-0" />
                   <span className="truncate">{prompt.label}</span>
                 </motion.button>
               ))}
             </div>
           </div>
 
-          <div className="space-y-2">
-            <label htmlFor="query" className="text-sm font-medium">
-              Research Question
+          <div className="space-y-3">
+            <label htmlFor="query" className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+              <span>PRIMARY DIRECTIVE / QUERY</span>
+              <div className="h-px bg-border flex-1" />
             </label>
             <Textarea
               id="query"
-              placeholder="e.g., Analyze Tesla's investment prospects for 2025, considering EV market growth and competition..."
+              placeholder="ENTER ANALYSIS PARAMETERS..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="min-h-[100px] resize-none"
+              className="min-h-[120px] resize-none rounded-none font-serif text-lg leading-relaxed placeholder:font-mono placeholder:text-xs placeholder:uppercase tracking-wide focus-visible:ring-1 focus-visible:ring-primary border-border bg-background"
             />
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-4">
             <button
               type="button"
               onClick={() => setShowAdvanced(!showAdvanced)}
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+              className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors flex items-center gap-2"
             >
-              {showAdvanced ? "Hide" : "Show"} Advanced Options
+              <span>{showAdvanced ? "[-] HIDE" : "[+] SHOW"} ADVANCED PARAMETERS</span>
             </button>
 
             <AnimatePresence>
@@ -166,21 +175,21 @@ export function NewResearchDialog({
                   exit={{ height: 0, opacity: 0 }}
                   className="space-y-4 overflow-hidden"
                 >
-                  <div className="space-y-2">
-                    <label htmlFor="context" className="text-sm font-medium">
-                      Additional Context (Optional)
+                  <div className="space-y-3 pt-2">
+                    <label htmlFor="context" className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                      SUPPLEMENTARY CONTEXT
                     </label>
                     <Textarea
                       id="context"
-                      placeholder="Any specific context or background information..."
+                      placeholder="APPEND ADDITIONAL METADATA OR CONTEXT..."
                       value={context}
                       onChange={(e) => setContext(e.target.value)}
-                      className="min-h-[80px] resize-none"
+                      className="min-h-[80px] resize-none rounded-none font-serif text-sm placeholder:font-mono placeholder:text-xs placeholder:uppercase border-border bg-background"
                     />
                   </div>
 
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Focus Areas</label>
+                  <div className="space-y-3 pt-2">
+                    <label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">FOCUS VECTORS</label>
                     <div className="flex flex-wrap gap-2">
                       {["Financial Analysis", "Competitive Landscape", "Market Trends", "Risk Assessment", "Valuation"].map(
                         (area) => (
@@ -189,10 +198,10 @@ export function NewResearchDialog({
                             type="button"
                             onClick={() => toggleFocusArea(area)}
                             className={cn(
-                              "px-3 py-1.5 text-xs rounded-full border transition-colors",
+                              "px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest border transition-colors rounded-none",
                               focusAreas.includes(area)
-                                ? "border-primary bg-primary/20 text-primary"
-                                : "border-border/50 hover:border-primary/50"
+                                ? "border-primary bg-primary text-primary-foreground"
+                                : "border-border bg-card hover:bg-muted/50 hover:border-primary/50 text-muted-foreground"
                             )}
                           >
                             {area}
@@ -206,29 +215,30 @@ export function NewResearchDialog({
             </AnimatePresence>
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-border/50">
+          <div className="flex items-center justify-between pt-6 mt-6 border-t border-border">
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               onClick={() => onOpenChange(false)}
               disabled={isLoading}
+              className="rounded-none font-mono text-xs uppercase tracking-widest border-border"
             >
-              Cancel
+              ABORT
             </Button>
             <Button
               type="submit"
               disabled={!query.trim() || isLoading}
-              className="gap-2 bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500"
+              className="gap-2 rounded-none font-mono text-xs uppercase tracking-widest bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground px-8"
             >
               {isLoading ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Starting Research...
+                  INITIALIZING...
                 </>
               ) : (
                 <>
                   <Sparkles className="h-4 w-4" />
-                  Start Research
+                  EXECUTE
                 </>
               )}
             </Button>

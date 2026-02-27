@@ -80,6 +80,14 @@ export interface ResearchMetadata {
   gradientAgentId?: string;
   gradientKnowledgeBaseId?: string;
   useGradientNative?: boolean;
+  failureCode?: 'rate_limited' | 'timeout' | 'tool_budget_exceeded' | 'subagent_budget_exceeded' | 'recursion_limit_reached' | 'provider_error' | 'guardrails_blocked' | 'insufficient_research_output' | 'invalid_cached_report' | 'unknown_error';
+  failureStage?: string;
+  timedOutAt?: string;
+  budgetMetrics?: {
+    toolCalls: number;
+    subagentCalls: number;
+    elapsedMs: number;
+  };
 }
 
 export type ResearchStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
@@ -150,9 +158,22 @@ export interface WebSocketMessage {
   timestamp: string;
 }
 
+export interface SubAgentActivity {
+  id: string;
+  name: string;
+  status: 'started' | 'running' | 'completed' | 'failed';
+  detail?: string;
+  timestamp: string;
+}
+
 export interface ProgressUpdate {
   stage: string;
+  status?: ResearchStatus;
   uniqueSources?: number;
   domainCount?: number;
   expectedSubagents?: number;
+  completedSubagents?: number;
+  urls?: string[];
+  reasoning?: string[];
+  subAgentActivities?: SubAgentActivity[];
 }

@@ -4,10 +4,10 @@ import { cn } from "@/lib/utils";
 const Dialog = ({ children, open, onOpenChange }: { children: React.ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void }) => {
   const [internalOpen, setInternalOpen] = React.useState(false);
   const isOpen = open !== undefined ? open : internalOpen;
-  const handleOpenChange = (value: boolean) => {
+  const handleOpenChange = React.useCallback((value: boolean) => {
     if (open === undefined) setInternalOpen(value);
     onOpenChange?.(value);
-  };
+  }, [open, onOpenChange]);
 
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -21,7 +21,7 @@ const Dialog = ({ children, open, onOpenChange }: { children: React.ReactNode; o
       document.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = "";
     };
-  }, [isOpen]);
+  }, [isOpen, handleOpenChange]);
 
   if (!isOpen) return null;
 
@@ -44,12 +44,6 @@ const DialogContext = React.createContext<{
   open: boolean;
   onOpenChange: (open: boolean) => void;
 } | null>(null);
-
-const useDialog = () => {
-  const context = React.useContext(DialogContext);
-  if (!context) throw new Error("Dialog components must be used within Dialog");
-  return context;
-};
 
 const DialogContent = React.forwardRef<
   HTMLDivElement,

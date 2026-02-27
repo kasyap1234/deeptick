@@ -54,10 +54,27 @@ export class GradientAgentService {
   private baseUrl = 'https://api.digitalocean.com';
   private apiVersion = 'v2';
 
+  private async fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 30_000): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private requireAccessToken(): string {
+    if (!config.DO_GENAI_API_KEY) {
+      throw new Error('DO_GENAI_API_KEY is required for Gradient agent operations');
+    }
+    return config.DO_GENAI_API_KEY;
+  }
+
   private getHeaders() {
     return {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.DO_GENAI_API_KEY}`,
+      'Authorization': `Bearer ${this.requireAccessToken()}`,
     };
   }
 
@@ -86,7 +103,7 @@ export class GradientAgentService {
 
     logger.info({ agentName: name, projectId: config.gradient.projectId }, 'Creating Gradient Agent');
 
-    const response = await fetch(`${this.baseUrl}/${this.apiVersion}/gen-ai/agents`, {
+    const response = await this.fetchWithTimeout(`${this.baseUrl}/${this.apiVersion}/gen-ai/agents`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(payload),
@@ -104,7 +121,7 @@ export class GradientAgentService {
   }
 
   async getAgent(agentId: string): Promise<GradientAgent> {
-    const response = await fetch(`${this.baseUrl}/${this.apiVersion}/gen-ai/agents/${agentId}`, {
+    const response = await this.fetchWithTimeout(`${this.baseUrl}/${this.apiVersion}/gen-ai/agents/${agentId}`, {
       method: 'GET',
       headers: this.getHeaders(),
     });
@@ -123,7 +140,7 @@ export class GradientAgentService {
       throw new Error('GRADIENT_PROJECT_ID is required to list agents');
     }
 
-    const response = await fetch(
+    const response = await this.fetchWithTimeout(
       `${this.baseUrl}/${this.apiVersion}/gen-ai/agents?project_id=${config.gradient.projectId}`,
       {
         method: 'GET',
@@ -141,7 +158,7 @@ export class GradientAgentService {
   }
 
   async deleteAgent(agentId: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/${this.apiVersion}/gen-ai/agents/${agentId}`, {
+    const response = await this.fetchWithTimeout(`${this.baseUrl}/${this.apiVersion}/gen-ai/agents/${agentId}`, {
       method: 'DELETE',
       headers: this.getHeaders(),
     });
@@ -155,7 +172,7 @@ export class GradientAgentService {
   }
 
   async attachKnowledgeBases(agentId: string, knowledgeBaseUuids: string[]): Promise<void> {
-    const response = await fetch(
+    const response = await this.fetchWithTimeout(
       `${this.baseUrl}/${this.apiVersion}/gen-ai/agents/${agentId}/knowledge_bases`,
       {
         method: 'POST',
@@ -173,7 +190,7 @@ export class GradientAgentService {
   }
 
   async invokeAgent(agentId: string, message: string): Promise<{ response: string; sessionId?: string }> {
-    const response = await fetch(
+    const response = await this.fetchWithTimeout(
       `${this.baseUrl}/${this.apiVersion}/gen-ai/agents/${agentId}/complete`,
       {
         method: 'POST',
@@ -217,7 +234,7 @@ export class GradientAgentService {
       throw new Error('Agent must have endpoint and accessKey configured. Use createAgentWithEndpoint() or update agent in console.');
     }
 
-    const response = await fetch(`${agent.endpoint}/api/v1/chat/completions`, {
+    const response = await this.fetchWithTimeout(`${agent.endpoint}/api/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -263,7 +280,7 @@ export class GradientAgentService {
       throw new Error('Agent must have endpoint and accessKey configured');
     }
 
-    const response = await fetch(`${agent.endpoint}/api/v1/chat/completions`, {
+    const response = await this.fetchWithTimeout(`${agent.endpoint}/api/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -291,6 +308,7 @@ export class GradientAgentService {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    let lineBuffer = '';
 
     let currentRetrieval: RetrievalInfo | undefined;
 
@@ -299,22 +317,24 @@ export class GradientAgentService {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
+        lineBuffer += decoder.decode(value, { stream: true });
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            const data = trimmed.slice(6);
             if (data === '[DONE]') return;
 
             try {
               const parsed = JSON.parse(data);
               const content = parsed.choices?.[0]?.delta?.content || '';
-              
+
               if (parsed.retrieval) {
                 currentRetrieval = parsed.retrieval;
               }
-              
+
               if (content) {
                 yield { content, retrieval: currentRetrieval };
               }
@@ -344,15 +364,21 @@ export class GradientAgentService {
     }
 
     const data = (await response.json()) as Record<string, unknown>;
+    const agentData = (data.agent ?? {}) as Record<string, unknown>;
     return {
       ...agent,
-      endpoint: (data as any).agent?.endpoint,
-      accessKey: (data as any).agent?.access_key || (data as any).agent?.accessKey,
+      endpoint: typeof agentData.endpoint === 'string' ? agentData.endpoint : undefined,
+      accessKey:
+        typeof agentData.access_key === 'string'
+          ? agentData.access_key
+          : typeof agentData.accessKey === 'string'
+            ? agentData.accessKey
+            : undefined,
     };
   }
 
   async *streamAgent(agentId: string, message: string): AsyncGenerator<string> {
-    const response = await fetch(
+    const response = await this.fetchWithTimeout(
       `${this.baseUrl}/${this.apiVersion}/gen-ai/agents/${agentId}/stream`,
       {
         method: 'POST',
@@ -375,18 +401,21 @@ export class GradientAgentService {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    let lineBuffer = '';
 
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
+        lineBuffer += decoder.decode(value, { stream: true });
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            const data = trimmed.slice(6);
             if (data === '[DONE]') return;
 
             try {

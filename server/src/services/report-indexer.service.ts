@@ -36,36 +36,6 @@ export interface IndexedReport {
   similarity: number;
 }
 
-function embeddingToString(embedding: number[]): string {
-  return JSON.stringify(embedding);
-}
-
-function stringToEmbedding(str: string): number[] {
-  try {
-    return JSON.parse(str);
-  } catch {
-    return [];
-  }
-}
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length || a.length === 0) return 0;
-  
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-  
-  for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  
-  if (normA === 0 || normB === 0) return 0;
-  
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
 function extractTicker(query: string): string | undefined {
   const tickerMatch = query.match(/\b([A-Z]{1,5})\b/);
   if (tickerMatch && tickerMatch[1]) {
@@ -246,7 +216,7 @@ export class ReportIndexerService {
         WHERE ($2::text IS NULL OR "userId" = $2)
           AND ($3::text IS NULL OR ticker = $3)
           AND ($4::text IS NULL OR sector = $4)
-        ORDER BY embedding <=> $1::vector
+        ORDER BY embedding <=> $1::vector, "reportDate" DESC
         LIMIT $5
       `;
       

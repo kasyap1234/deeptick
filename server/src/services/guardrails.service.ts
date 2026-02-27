@@ -19,9 +19,23 @@ export interface GuardrailCheckResult {
 export class GuardrailsService {
   private baseUrl = 'https://api.digitalocean.com/v2/gen-ai';
   private accessToken: string;
+  private requestTimeoutMs = 10_000;
 
   constructor() {
-    this.accessToken = process.env.DIGITALOCEAN_TOKEN || '';
+    this.accessToken = config.digitalOceanToken;
+  }
+
+  private async fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async listGuardrails(): Promise<Guardrail[]> {
@@ -31,7 +45,7 @@ export class GuardrailsService {
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/guardrails`, {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/guardrails`, {
         headers: {
           'Authorization': `Bearer ${this.accessToken}`,
           'Content-Type': 'application/json',
@@ -73,7 +87,7 @@ export class GuardrailsService {
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/guardrails/check`, {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/guardrails/check`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.accessToken}`,
@@ -89,7 +103,8 @@ export class GuardrailsService {
       if (!response.ok) {
         const errorText = await response.text();
         logger.warn({ status: response.status, error: errorText }, 'Guardrail check failed');
-        return { passed: true, triggered: [] };
+        const failOpen = config.guardrails?.failOpen ?? true;
+        return { passed: failOpen, triggered: [] };
       }
 
       const data = await response.json() as {
@@ -106,7 +121,8 @@ export class GuardrailsService {
       };
     } catch (error) {
       logger.error({ error }, 'Guardrail check error');
-      return { passed: true, triggered: [] };
+      const failOpen = config.guardrails?.failOpen ?? true;
+      return { passed: failOpen, triggered: [] };
     }
   }
 

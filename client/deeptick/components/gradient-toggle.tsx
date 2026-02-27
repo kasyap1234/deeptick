@@ -11,7 +11,6 @@ import {
   Loader2 
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 import { useGradient } from "@/lib/api";
 
 interface GradientToggleProps {
@@ -31,14 +30,25 @@ export function GradientToggle({ className }: GradientToggleProps) {
 
   const checkGradientStatus = async () => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/gradient/agents`);
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/gradient/agents`, {
+        credentials: 'include',
+      });
       if (response.ok) {
         const data = await response.json();
         setGradientAgents(data.data?.length || 0);
         setStatus('connected');
-      } else {
-        setStatus('error');
+        return;
       }
+      if (response.status === 503) {
+        const data = await response.json().catch(() => ({}));
+        const msg = String(data?.error ?? '');
+        if (msg.includes('not configured') || msg.includes('required')) {
+          setGradientAgents(0);
+          setStatus('connected');
+          return;
+        }
+      }
+      setStatus('error');
     } catch {
       setStatus('error');
     }

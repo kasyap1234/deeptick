@@ -1,6 +1,24 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 const USE_GRADIENT = process.env.NEXT_PUBLIC_USE_GRADIENT === 'true';
 
+type AuthUser = {
+  id: string;
+  email: string;
+  name?: string | null;
+  image?: string | null;
+  emailVerified?: boolean;
+};
+
+type AuthSession = {
+  id: string;
+  expiresAt: string;
+};
+
+type AuthSessionResponse = {
+  user: AuthUser;
+  session: AuthSession;
+};
+
 class ApiClient {
   private baseUrl: string;
   private useGradient: boolean;
@@ -50,7 +68,11 @@ class ApiClient {
   }
 
   async getResearchJob(jobId: string) {
-    return this.fetch<{ success: boolean; data: import('./types').ResearchJob }>(`/api/research/${jobId}`);
+    const resp = await this.fetch<{ success: boolean; data: Record<string, unknown> }>(`/api/research/${jobId}`);
+    if (resp.data && 'jobId' in resp.data && !('id' in resp.data)) {
+      resp.data.id = resp.data.jobId;
+    }
+    return resp as unknown as { success: boolean; data: import('./types').ResearchJob };
   }
 
   async getResearchReport(jobId: string) {
@@ -108,27 +130,27 @@ class ApiClient {
 
   // Auth endpoints
   async signUp(email: string, password: string, name?: string) {
-    return this.fetch<{ success: boolean; data: { user: any; session: any } }>('/api/auth/sign-up', {
+    return this.fetch<AuthSessionResponse>('/api/auth/sign-up/email', {
       method: 'POST',
       body: JSON.stringify({ email, password, name }),
     });
   }
 
   async signIn(email: string, password: string) {
-    return this.fetch<{ success: boolean; data: { user: any; session: any } }>('/api/auth/sign-in', {
+    return this.fetch<AuthSessionResponse>('/api/auth/sign-in/email', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
   }
 
   async signOut() {
-    return this.fetch<{ success: boolean }>('/api/auth/sign-out', {
+    return this.fetch<Record<string, unknown>>('/api/auth/sign-out', {
       method: 'POST',
     });
   }
 
   async getSession() {
-    return this.fetch<{ success: boolean; data?: { user: any } }>('/api/auth/session');
+    return this.fetch<AuthSessionResponse | null>('/api/auth/get-session');
   }
 
   // Gradient-specific endpoints
@@ -166,4 +188,6 @@ class ApiClient {
 }
 
 export const api = new ApiClient(API_BASE_URL);
+export const isGradientEnabled = USE_GRADIENT;
+/** @deprecated Use `isGradientEnabled` instead */
 export const useGradient = USE_GRADIENT;

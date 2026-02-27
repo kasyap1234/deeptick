@@ -1,11 +1,14 @@
 import { Elysia, t } from 'elysia';
 import { eq } from 'drizzle-orm';
+import { config } from '../../config/index.js';
 import { gradientKnowledgeBaseService } from '../../services/gradient-kb.service.js';
 import { gradientAgentService } from '../../services/gradient-agent.service.js';
+import { researchService } from '../../services/research.service.js';
 import { getDb } from '../../db/connection.js';
 import { userKnowledgeBases } from '../../db/schema.js';
 import { logger } from '../../utils/logger.js';
-import { authMiddleware } from '../../middleware/auth.js';
+import { authMacro } from '../../plugins/better-auth.plugin.js';
+import { toApiError } from '../../utils/api-error.js';
 
 const CreateKnowledgeBaseSchema = t.Object({
   name: t.String({ minLength: 1 }),
@@ -13,11 +16,32 @@ const CreateKnowledgeBaseSchema = t.Object({
   purpose: t.Optional(t.String()),
 });
 
-export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
-  .get('/knowledge-bases', async ({ set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
+const KBSearchSchema = t.Object({
+  query: t.String({ minLength: 1 }),
+  limit: t.Optional(t.Number({ minimum: 1, maximum: 100 })),
+});
 
+const GradientResearchSchema = t.Object({
+  query: t.String({ minLength: 1 }),
+  context: t.Optional(t.String()),
+  focusAreas: t.Optional(t.Array(t.String())),
+  maxResults: t.Optional(t.Number({ minimum: 1, maximum: 50 })),
+});
+
+const AgentInvokeSchema = t.Object({
+  message: t.String({ minLength: 1 }),
+  stream: t.Optional(t.Boolean()),
+});
+
+function routeError(set: { status: number }, error: unknown, fallbackMessage: string) {
+  const mapped = toApiError(error, fallbackMessage);
+  set.status = mapped.status;
+  return mapped.body;
+}
+
+export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
+  .use(authMacro)
+  .get('/knowledge-bases', async ({ set, user }) => {
     try {
       const db = getDb();
       const userKBs = await db
@@ -31,20 +55,16 @@ export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
           updatedAt: userKnowledgeBases.updatedAt,
         })
         .from(userKnowledgeBases)
-        .where(eq(userKnowledgeBases.userId, authResult.userId));
+        .where(eq(userKnowledgeBases.userId, user.id));
 
       return { success: true, data: userKBs };
     } catch (error) {
       logger.error({ error }, 'Failed to list knowledge bases');
-      set.status = 500;
-      return { success: false, error: 'Failed to list knowledge bases' };
+      return routeError(set, error, 'Failed to list knowledge bases');
     }
-  })
+  }, { auth: true })
 
-  .post('/knowledge-bases', async ({ body, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .post('/knowledge-bases', async ({ body, set, user }) => {
     try {
       const kb = await gradientKnowledgeBaseService.createKnowledgeBase({
         name: body.name,
@@ -55,7 +75,7 @@ export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
       const [userKB] = await db
         .insert(userKnowledgeBases)
         .values({
-          userId: authResult.userId,
+          userId: user.id,
           purpose: (body.purpose ?? 'general') as 'research' | 'chat' | 'cache' | 'general',
           gradientKbId: kb.id,
           name: kb.name,
@@ -75,17 +95,14 @@ export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
       };
     } catch (error) {
       logger.error({ error }, 'Failed to create knowledge base');
-      set.status = 500;
-      return { success: false, error: 'Failed to create knowledge base' };
+      return routeError(set, error, 'Failed to create knowledge base');
     }
   }, {
+    auth: true,
     body: CreateKnowledgeBaseSchema,
   })
 
-  .get('/knowledge-bases/:kbId', async ({ params, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .get('/knowledge-bases/:kbId', async ({ params, set, user }) => {
     try {
       const db = getDb();
       const [userKB] = await db
@@ -103,7 +120,7 @@ export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
         .where(eq(userKnowledgeBases.id, params.kbId))
         .limit(1);
 
-      if (!userKB || userKB.userId !== authResult.userId) {
+      if (!userKB || userKB.userId !== user.id) {
         set.status = 404;
         return { success: false, error: 'Knowledge base not found' };
       }
@@ -123,15 +140,11 @@ export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
       };
     } catch (error) {
       logger.error({ error, kbId: params.kbId }, 'Failed to get knowledge base');
-      set.status = 500;
-      return { success: false, error: 'Failed to get knowledge base' };
+      return routeError(set, error, 'Failed to get knowledge base');
     }
-  })
+  }, { auth: true })
 
-  .delete('/knowledge-bases/:kbId', async ({ params, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .delete('/knowledge-bases/:kbId', async ({ params, set, user }) => {
     try {
       const db = getDb();
       const [userKB] = await db
@@ -140,7 +153,7 @@ export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
         .where(eq(userKnowledgeBases.id, params.kbId))
         .limit(1);
 
-      if (!userKB || userKB.userId !== authResult.userId) {
+      if (!userKB || userKB.userId !== user.id) {
         set.status = 404;
         return { success: false, error: 'Knowledge base not found' };
       }
@@ -151,15 +164,11 @@ export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
       return { success: true, message: 'Knowledge base deleted' };
     } catch (error) {
       logger.error({ error, kbId: params.kbId }, 'Failed to delete knowledge base');
-      set.status = 500;
-      return { success: false, error: 'Failed to delete knowledge base' };
+      return routeError(set, error, 'Failed to delete knowledge base');
     }
-  })
+  }, { auth: true })
 
-  .post('/knowledge-bases/:kbId/search', async ({ params, body, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .post('/knowledge-bases/:kbId/search', async ({ params, body, set, user }) => {
     try {
       const db = getDb();
       const [userKB] = await db
@@ -168,30 +177,25 @@ export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
         .where(eq(userKnowledgeBases.id, params.kbId))
         .limit(1);
 
-      if (!userKB || userKB.userId !== authResult.userId) {
+      if (!userKB || userKB.userId !== user.id) {
         set.status = 404;
         return { success: false, error: 'Knowledge base not found' };
       }
 
-      const searchBody = body as { query: string; limit?: number };
       const results = await gradientKnowledgeBaseService.searchKnowledgeBase(
         userKB.gradientKbId,
-        searchBody.query,
-        searchBody.limit
+        body.query,
+        body.limit
       );
 
       return { success: true, data: results };
     } catch (error) {
       logger.error({ error, kbId: params.kbId }, 'Failed to search knowledge base');
-      set.status = 500;
-      return { success: false, error: 'Failed to search knowledge base' };
+      return routeError(set, error, 'Failed to search knowledge base');
     }
-  })
+  }, { auth: true, body: KBSearchSchema })
 
-  .post('/knowledge-bases/:kbId/index', async ({ params, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .post('/knowledge-bases/:kbId/index', async ({ params, set, user }) => {
     try {
       const db = getDb();
       const [userKB] = await db
@@ -200,7 +204,7 @@ export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
         .where(eq(userKnowledgeBases.id, params.kbId))
         .limit(1);
 
-      if (!userKB || userKB.userId !== authResult.userId) {
+      if (!userKB || userKB.userId !== user.id) {
         set.status = 404;
         return { success: false, error: 'Knowledge base not found' };
       }
@@ -210,15 +214,44 @@ export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
       return { success: true, message: 'Knowledge base indexing initiated' };
     } catch (error) {
       logger.error({ error, kbId: params.kbId }, 'Failed to index knowledge base');
-      set.status = 500;
-      return { success: false, error: 'Failed to index knowledge base' };
+      return routeError(set, error, 'Failed to index knowledge base');
     }
-  })
+  }, { auth: true })
 
-  .get('/agents', async ({ set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
+  .post('/research', async ({ body, set, user }) => {
+    try {
+      // Create research job using the regular research service
+      const job = await researchService.createResearchJob({
+        userId: user.id,
+        query: body.query,
+        context: body.context,
+        focusAreas: body.focusAreas,
+        maxResults: body.maxResults,
+      });
 
+      set.status = 202;
+      return {
+        success: true,
+        data: {
+          jobId: job.id,
+          status: job.status,
+          query: job.query,
+          createdAt: job.createdAt,
+        },
+      };
+    } catch (error) {
+      logger.error({ error }, 'Failed to create Gradient research job');
+      return routeError(set, error, 'Failed to create research job');
+    }
+  }, { auth: true, body: GradientResearchSchema })
+
+  .get('/agents', async ({ set }) => {
+    if (!config.gradient.projectId || !config.DO_GENAI_API_KEY) {
+      return {
+        success: true,
+        data: [],
+      };
+    }
     try {
       const agents = await gradientAgentService.listAgents();
 
@@ -232,25 +265,26 @@ export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
         })),
       };
     } catch (error) {
+      // Gracefully handle auth failures — the GenAI API key may not have
+      // permissions for the Agent Management API.
+      const msg = error instanceof Error ? error.message : '';
+      if (msg.includes('401') || msg.includes('Unauthorized')) {
+        logger.warn('Gradient Agent API returned 401 — agent listing unavailable');
+        return { success: true, data: [] };
+      }
       logger.error({ error }, 'Failed to list agents');
-      set.status = 500;
-      return { success: false, error: 'Failed to list agents' };
+      return routeError(set, error, 'Failed to list agents');
     }
-  })
+  }, { auth: true })
 
-  .post('/agents/:agentId/invoke', async ({ params, body, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .post('/agents/:agentId/invoke', async ({ params, body, set }) => {
     try {
-      const invokeBody = body as { message: string; stream?: boolean };
-      
-      if (invokeBody.stream) {
+      if (body.stream) {
         set.headers['Content-Type'] = 'text/event-stream';
-        
+
         const stream = await gradientAgentService.streamAgent(
           params.agentId,
-          invokeBody.message
+          body.message
         );
 
         const encoder = new TextEncoder();
@@ -272,13 +306,12 @@ export const gradientRoutes = new Elysia({ prefix: '/api/gradient' })
 
       const result = await gradientAgentService.invokeAgent(
         params.agentId,
-        invokeBody.message
+        body.message
       );
 
       return { success: true, data: result };
     } catch (error) {
       logger.error({ error, agentId: params.agentId }, 'Failed to invoke agent');
-      set.status = 500;
-      return { success: false, error: 'Failed to invoke agent' };
+      return routeError(set, error, 'Failed to invoke agent');
     }
-  });
+  }, { auth: true, body: AgentInvokeSchema });

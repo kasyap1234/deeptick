@@ -82,4 +82,14 @@
 * **Auditability:** Every report must maintain a `trace_id` linking back to the raw scraper logs.
 * **Speed:** ElysiaJS must maintain  overhead for the API layer (excluding LLM processing).
 
+---
+
+## **7. Environment & Configuration**
+
+Copy `server/.env.example` to `.env` and set:
+
+* **Required for research:** `DATABASE_URL`, `BETTER_AUTH_*`, at least one of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `DO_GENAI_API_KEY`, and `EXASEARCH_API_KEY` (or `EXA_API_KEY`).
+* **Gradient (optional):** `GRADIENT_PROJECT_ID` for listing agents; if missing, the UI treats it as "no agents" (503).
+* **DigitalOcean only:** Use DigitalOcean as the sole provider by setting `DO_GENAI_API_KEY` and `DO_GENAI_ENDPOINT` (default `https://inference.do-ai.run/v1`). The API is OpenAI-compatible (one endpoint, one key). Set `DEEP_RESEARCH_*_MODEL` to a DigitalOcean model ID from [available models](https://docs.digitalocean.com/products/gradient-ai-platform/details/models/) (e.g. `openai-gpt-oss-120b`, `openai-gpt-4o`, `anthropic-claude-5-sonnet`, `llama3.3-70b-instruct`). These IDs are passed through to the API; no separate "model provider" config is needed.
+
 

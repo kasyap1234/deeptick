@@ -1,28 +1,31 @@
 "use client";
 
 import { useState } from "react";
-import { signIn, signUp } from "@/lib/auth-client";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { signIn, signUp, type AuthSocialProvider, authSocialProviderLabels, authSocialProviders } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface AuthDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  dismissable?: boolean;
 }
 
-export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
+export function AuthDialog({ open, onOpenChange, dismissable = true }: AuthDialogProps) {
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setSuccess("");
     setLoading(true);
 
     try {
@@ -32,7 +35,11 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
           {
             onSuccess: () => {
               setMode("sign-in");
-              setError("Account created! Please sign in.");
+              setSuccess("Account created! Please sign in.");
+              setError("");
+            },
+            onError: (ctx) => {
+              setError(ctx.error.message || "Sign up failed");
             },
           }
         );
@@ -57,7 +64,7 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
     }
   };
 
-  const handleOAuthSignIn = async (provider: "google" | "github") => {
+  const handleOAuthSignIn = async (provider: AuthSocialProvider) => {
     try {
       await signIn.social({
         provider,
@@ -70,17 +77,33 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
   };
 
   return (
-    <div className={`fixed inset-0 z-50 flex items-center justify-center ${open ? "block" : "hidden"}`}>
-      <div className="fixed inset-0 bg-black/50" onClick={() => onOpenChange(false)} />
-      <Card className="relative z-10 w-full max-w-md mx-4">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Welcome to DeepTick</CardTitle>
-          <CardDescription>
-            Sign in to access your research history
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Tabs value={mode} onValueChange={(v) => setMode(v as "sign-in" | "sign-up")}>
+    <DialogPrimitive.Root
+      open={open}
+      onOpenChange={dismissable ? onOpenChange : undefined}
+    >
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        <DialogPrimitive.Content
+          onEscapeKeyDown={dismissable ? undefined : (e) => e.preventDefault()}
+          onPointerDownOutside={dismissable ? undefined : (e) => e.preventDefault()}
+          onInteractOutside={dismissable ? undefined : (e) => e.preventDefault()}
+          className="fixed left-[50%] top-[50%] z-50 w-full max-w-md translate-x-[-50%] translate-y-[-50%] bg-card border border-border rounded-lg shadow-lg p-6 mx-4"
+        >
+          <div className="text-center mb-4">
+            <DialogPrimitive.Title className="text-2xl font-semibold">Welcome to DeepTick</DialogPrimitive.Title>
+            <DialogPrimitive.Description className="text-sm text-muted-foreground mt-1">
+              Sign in to access your research history
+            </DialogPrimitive.Description>
+          </div>
+
+          <Tabs value={mode} onValueChange={(v) => {
+            setMode(v as "sign-in" | "sign-up");
+            setEmail("");
+            setPassword("");
+            setName("");
+            setError("");
+            setSuccess("");
+          }}>
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="sign-in">Sign In</TabsTrigger>
               <TabsTrigger value="sign-up">Sign Up</TabsTrigger>
@@ -119,6 +142,9 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
                   />
                 </div>
 
+                {success && (
+                  <p className="text-sm text-emerald-600">{success}</p>
+                )}
                 {error && (
                   <p className="text-sm text-red-500">{error}</p>
                 )}
@@ -129,34 +155,34 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
               </div>
             </form>
 
-            <div className="relative my-4">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-background px-2 text-muted-foreground">Or continue with</span>
-              </div>
-            </div>
+            {authSocialProviders.length > 0 && (
+              <>
+                <div className="relative my-4">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-background px-2 text-muted-foreground">Or continue with</span>
+                  </div>
+                </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                variant="outline"
-                onClick={() => handleOAuthSignIn("google")}
-                disabled={loading}
-              >
-                Google
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => handleOAuthSignIn("github")}
-                disabled={loading}
-              >
-                GitHub
-              </Button>
-            </div>
+                <div className={`grid gap-2 ${authSocialProviders.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+                  {authSocialProviders.map((provider) => (
+                    <Button
+                      key={provider}
+                      variant="outline"
+                      onClick={() => handleOAuthSignIn(provider)}
+                      disabled={loading}
+                    >
+                      {authSocialProviderLabels[provider]}
+                    </Button>
+                  ))}
+                </div>
+              </>
+            )}
           </Tabs>
-        </CardContent>
-      </Card>
-    </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }

@@ -1,8 +1,21 @@
-import { tool } from 'langchain';
+import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 
-const makeTool = tool as any;
+const CONTEXT7_TIMEOUT_MS = 10_000;
+
+async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CONTEXT7_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 export interface Context7DocResult {
   title: string;
@@ -14,8 +27,8 @@ export interface Context7DocResult {
 async function searchContext7Docs(query: string, libraryId?: string): Promise<Context7DocResult[]> {
   try {
     const baseUrl = 'https://api.context7.com/v1';
-    
-    const response = await fetch(`${baseUrl}/search`, {
+
+    const response = await fetchWithTimeout(`${baseUrl}/search`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -57,8 +70,8 @@ async function searchContext7Docs(query: string, libraryId?: string): Promise<Co
 async function resolveContext7Library(libraryName: string, query: string): Promise<string | null> {
   try {
     const baseUrl = 'https://api.context7.com/v1';
-    
-    const response = await fetch(`${baseUrl}/libraries/resolve`, {
+
+    const response = await fetchWithTimeout(`${baseUrl}/libraries/resolve`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -80,12 +93,12 @@ async function resolveContext7Library(libraryName: string, query: string): Promi
   }
 }
 
-export const context7LookupTool = makeTool(
+export const context7LookupTool = tool(
   async ({ library, query }: { library: string; query: string }) => {
     const libraryId = await resolveContext7Library(library, query);
-    
+
     const results = await searchContext7Docs(query, libraryId || undefined);
-    
+
     if (results.length === 0) {
       return {
         success: false,
@@ -127,14 +140,15 @@ Returns relevant documentation snippets with source URLs.`,
   }
 );
 
-export const factCheckTool = makeTool(
+export const factCheckTool = tool(
   async ({ claim, domain }: { claim: string; domain?: string }) => {
     const searchQuery = domain ? `${claim} ${domain}` : claim;
     const results = await searchContext7Docs(searchQuery);
-    
+
     return {
       claim,
-      verified: results.length > 0,
+      sourcesFound: results.length > 0,
+      sourceCount: results.length,
       sources: results.map(r => ({
         title: r.title,
         url: r.url,
@@ -144,16 +158,16 @@ export const factCheckTool = makeTool(
   },
   {
     name: 'fact_check',
-    description: `Verify factual claims against authoritative sources.
+    description: `Search for sources related to a factual claim. Does NOT verify truth — only finds relevant documentation.
 
-This tool helps validate numerical claims, statistics, or factual statements
-by searching the web for corroborating or contradicting evidence.
+This tool searches for documentation related to a claim or statement.
+The presence of sources does not confirm truth; the agent must evaluate relevance.
 
 Input should be:
-- The specific claim or fact to verify
+- The specific claim or statement to find sources for
 - Optional: the context or domain (e.g., "finance", "technology")
 
-Returns sources that support or refute the claim.`,
+Returns related sources. The agent must assess whether they support or refute the claim.`,
     schema: z.object({
       claim: z.string().describe('The factual claim or statement to verify'),
       domain: z.string().optional().describe('Optional domain context (e.g., "finance", "technology")'),
@@ -161,10 +175,10 @@ Returns sources that support or refute the claim.`,
   }
 );
 
-export const citationFormatterTool = makeTool(
+export const citationFormatterTool = tool(
   async ({ url, title, accessDate }: { url: string; title?: string; accessDate?: string }) => {
     const date = accessDate || new Date().toISOString().split('T')[0];
-    
+
     return {
       formatted: `[${title || 'Source'}](${url}) (accessed ${date})`,
       apa: `${title || url}. (n.d.). Retrieved ${date}, from ${url}`,

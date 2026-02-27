@@ -10,7 +10,7 @@ const client = postgres(config.DATABASE_URL, {
   connect_timeout: 10,
   prepare: false,
   ssl: {
-    rejectUnauthorized: false,
+    rejectUnauthorized: config.isProduction,
   },
 });
 

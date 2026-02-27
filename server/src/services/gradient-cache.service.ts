@@ -127,9 +127,9 @@ export class GradientCacheService {
       }
 
       if (result.retrieval?.retrieved_data && result.retrieval.retrieved_data.length > 0) {
-        logger.info({ 
-          query: query.substring(0, 50), 
-          retrievedCount: result.retrieval.retrieved_data.length 
+        logger.info({
+          query: query.substring(0, 50),
+          retrievedCount: result.retrieval.retrieved_data.length
         }, 'Cache hit in Gradient KB');
 
         return {
@@ -195,7 +195,7 @@ export class GradientCacheService {
         { includeRetrievalInfo: true }
       )) {
         buffer += chunk.content;
-        
+
         if (chunk.retrieval?.retrieved_data) {
           retrievalData = chunk.retrieval.retrieved_data;
         }
@@ -220,23 +220,28 @@ export class GradientCacheService {
     }
 
     logger.info({ query: query.substring(0, 50) }, 'Adding research to Gradient cache');
-    
-    const dataSourceName = `research-${Date.now()}-${query.substring(0, 30).replace(/[^a-zA-Z0-9]/g, '-')}`;
-    
+
     try {
+      const reportContent = JSON.stringify({
+        query,
+        result,
+        sources,
+        timestamp: new Date().toISOString(),
+      });
+
       await gradientKnowledgeBaseService.addDataSource(this.cacheKbId, {
-        name: dataSourceName,
-        type: 'file_url',
-        url: `data:text/plain;base64,${Buffer.from(JSON.stringify({
-          query,
-          result,
-          sources,
-          timestamp: new Date().toISOString(),
-        })).toString('base64')}`,
+        file_url_data_source: {
+          url: `data:text/plain;base64,${Buffer.from(reportContent).toString('base64')}`,
+        },
+        chunking_algorithm: 'CHUNKING_ALGORITHM_SEMANTIC',
+        chunking_options: {
+          max_chunk_size: 500,
+          semantic_threshold: 0.6,
+        },
       });
 
       await gradientKnowledgeBaseService.indexKnowledgeBase(this.cacheKbId);
-      
+
       logger.info({ query: query.substring(0, 50) }, 'Research added to Gradient cache');
     } catch (error) {
       logger.error({ error }, 'Failed to add research to cache');

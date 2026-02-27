@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { MessageSquare, X, Loader2, TrendingUp, Building2, DollarSign, Globe } from "lucide-react";
+import { MessageSquare, Loader2, TrendingUp, Building2, DollarSign, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

@@ -1,8 +1,7 @@
 "use client";
-
-export const dynamic = "force-dynamic";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { api } from "@/lib/api";
 import { motion } from "framer-motion";
 import {
   Plus,
@@ -81,8 +80,7 @@ export default function ChatPage() {
   const fetchConversations = useCallback(async () => {
     try {
       setIsLoading(true);
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/api/chat/conversations`);
-      const data = await response.json();
+      const data = await api.getConversations();
       if (data.success) {
         setConversations(data.data);
       }
@@ -99,12 +97,7 @@ export default function ChatPage() {
 
   const handleCreateConversation = async (title: string, context?: Record<string, unknown>) => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/api/chat/conversations`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, context }),
-      });
-      const data = await response.json();
+      const data = await api.createConversation(title, context);
       if (data.success) {
         setActiveConversationId(data.data.conversationId);
         fetchConversations();
@@ -117,9 +110,7 @@ export default function ChatPage() {
 
   const handleDeleteConversation = async (id: string) => {
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/api/chat/conversations/${id}`, {
-        method: "DELETE",
-      });
+      await api.deleteConversation(id);
       if (activeConversationId === id) {
         setActiveConversationId(null);
       }
@@ -228,26 +219,25 @@ export default function ChatPage() {
               onBack={() => setActiveConversationId(null)}
             />
           ) : (
-            <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-              <div className="relative mb-8">
-                <div className="absolute inset-0 bg-gradient-to-r from-teal-500/20 to-cyan-500/20 blur-3xl rounded-full" />
-                <div className="relative w-24 h-24 rounded-2xl bg-gradient-to-br from-teal-500 to-cyan-500 flex items-center justify-center shadow-2xl">
-                  <Brain className="h-12 w-12 text-white" />
+            <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-background/50 relative overflow-hidden">
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-foreground/5 blur-3xl rounded-full pointer-events-none" />
+              <div className="relative mb-12">
+                <div className="relative w-24 h-24 rounded-full border-[1.5px] border-border/80 bg-background/50 backdrop-blur-sm flex items-center justify-center shadow-sm">
+                  <Brain className="h-10 w-10 text-foreground/80" />
                 </div>
               </div>
-              <h2 className="text-3xl font-bold mb-3 gradient-text">
-                DeepTick Chat
+              <h2 className="text-3xl md:text-5xl font-serif tracking-tight mb-6 text-foreground relative z-10">
+                DeepTick Intelligence
               </h2>
-              <p className="text-muted-foreground max-w-md mb-6">
-                Have intelligent conversations about your research. Ask follow-up questions,
-                explore scenarios, and get deeper insights.
+              <p className="font-serif text-[1.15rem] text-muted-foreground/80 max-w-lg mb-10 leading-[1.8] relative z-10">
+                Interrogate research findings, simulate alternative scenarios, and synthesize specialized domains.
               </p>
               <Button
                 onClick={() => setShowNewDialog(true)}
-                className="gap-2 bg-gradient-to-r from-teal-600 to-cyan-600"
+                className="gap-3 rounded-full font-mono text-[11px] uppercase tracking-[0.2em] px-8 h-12 bg-foreground text-background hover:bg-foreground/90 transition-all shadow-md relative z-10"
               >
                 <Plus className="h-4 w-4" />
-                New Conversation
+                Initiate Session
               </Button>
             </div>
           )}

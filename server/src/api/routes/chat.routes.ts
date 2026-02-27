@@ -1,9 +1,10 @@
 import { Elysia, t } from 'elysia';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, sql } from 'drizzle-orm';
 import { getDb } from '../../db/connection.js';
 import { conversations, messages } from '../../db/schema.js';
-import { authMiddleware } from '../../middleware/auth.js';
 import { chatService } from '../../services/chat.service.js';
+import { authMacro } from '../../plugins/better-auth.plugin.js';
+import { clampedInt } from '../../utils/query-helpers.js';
 
 const CreateConversationSchema = t.Object({
   title: t.Optional(t.String()),
@@ -25,15 +26,13 @@ const SendMessageSchema = t.Object({
 });
 
 export const chatRoutes = new Elysia({ prefix: '/api/chat' })
-  .post('/conversations', async ({ body, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .use(authMacro)
+  .post('/conversations', async ({ body, set, user }) => {
     const db = getDb();
     const [conversation] = await db
       .insert(conversations)
       .values({
-        userId: authResult.userId,
+        userId: user.id,
         title: body.title ?? 'New Conversation',
         context: body.context ?? {},
       })
@@ -49,16 +48,14 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
       },
     };
   }, {
+    auth: true,
     body: CreateConversationSchema,
   })
 
-  .get('/conversations', async ({ query, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .get('/conversations', async ({ query, user }) => {
     const db = getDb();
-    const limit = parseInt(query?.limit ?? '20');
-    const offset = parseInt(query?.offset ?? '0');
+    const limit = clampedInt(query?.limit, 20, 1, 100);
+    const offset = clampedInt(query?.offset, 0, 0, 10000);
 
     const userConversations = await db
       .select({
@@ -69,7 +66,7 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
         updatedAt: conversations.updatedAt,
       })
       .from(conversations)
-      .where(eq(conversations.userId, authResult.userId))
+      .where(eq(conversations.userId, user.id))
       .orderBy(desc(conversations.updatedAt))
       .limit(limit)
       .offset(offset);
@@ -78,12 +75,9 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
       success: true,
       data: userConversations,
     };
-  })
+  }, { auth: true })
 
-  .get('/conversations/:conversationId', async ({ params, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .get('/conversations/:conversationId', async ({ params, set, user }) => {
     const db = getDb();
     const [conversation] = await db
       .select({
@@ -98,20 +92,17 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
       .where(eq(conversations.id, params.conversationId))
       .limit(1);
 
-    if (!conversation || conversation.userId !== authResult.userId) {
+    if (!conversation || conversation.userId !== user.id) {
       set.status = 404;
       return { success: false, error: 'Conversation not found' };
     }
 
     return { success: true, data: conversation };
-  })
+  }, { auth: true })
 
-  .get('/conversations/:conversationId/messages', async ({ params, query, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .get('/conversations/:conversationId/messages', async ({ params, query, set, user }) => {
     const db = getDb();
-    const limit = parseInt(query?.limit ?? '50');
+    const limit = clampedInt(query?.limit, 50, 1, 100);
 
     const [conversation] = await db
       .select({ userId: conversations.userId })
@@ -119,7 +110,7 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
       .where(eq(conversations.id, params.conversationId))
       .limit(1);
 
-    if (!conversation || conversation.userId !== authResult.userId) {
+    if (!conversation || conversation.userId !== user.id) {
       set.status = 404;
       return { success: false, error: 'Conversation not found' };
     }
@@ -138,21 +129,18 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
       .limit(limit);
 
     return { success: true, data: userMessages };
-  })
+  }, { auth: true })
 
-  .post('/conversations/:conversationId/messages', async ({ params, body, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .post('/conversations/:conversationId/messages', async ({ params, body, set, user }) => {
     const db = getDb();
-    
+
     const [conversation] = await db
       .select({ userId: conversations.userId, context: conversations.context })
       .from(conversations)
       .where(eq(conversations.id, params.conversationId))
       .limit(1);
 
-    if (!conversation || conversation.userId !== authResult.userId) {
+    if (!conversation || conversation.userId !== user.id) {
       set.status = 404;
       return { success: false, error: 'Conversation not found' };
     }
@@ -170,7 +158,7 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
     const [message] = await db
       .insert(messages)
       .values({
-        userId: authResult.userId,
+        userId: user.id,
         conversationId: params.conversationId,
         role: (body.role ?? 'user') as 'user' | 'assistant' | 'system',
         content: body.content,
@@ -189,7 +177,7 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
     const [assistantMessage] = await db
       .insert(messages)
       .values({
-        userId: authResult.userId,
+        userId: user.id,
         conversationId: params.conversationId,
         role: 'assistant',
         content: responseContent,
@@ -204,32 +192,30 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
 
     return { success: true, data: { userMessage: message, assistantMessage } };
   }, {
+    auth: true,
     body: SendMessageSchema,
   })
 
-  .post('/conversations/:conversationId/stream', async ({ params, body, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .post('/conversations/:conversationId/stream', async ({ params, body, set, user }) => {
     const db = getDb();
-    
+
     const [conversation] = await db
       .select({ userId: conversations.userId, context: conversations.context })
       .from(conversations)
       .where(eq(conversations.id, params.conversationId))
       .limit(1);
 
-    if (!conversation || conversation.userId !== authResult.userId) {
+    if (!conversation || conversation.userId !== user.id) {
       set.status = 404;
       return { success: false, error: 'Conversation not found' };
     }
 
     const messageBody = body as { content: string };
-    
+
     const [userMessage] = await db
       .insert(messages)
       .values({
-        userId: authResult.userId,
+        userId: user.id,
         conversationId: params.conversationId,
         role: 'user',
         content: messageBody.content,
@@ -256,7 +242,7 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
       async start(controller) {
         try {
           const fullResponse: string[] = [];
-          
+
           for await (const chunk of chatService.streamResponse(
             messageBody.content,
             {
@@ -271,7 +257,7 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
           await db
             .insert(messages)
             .values({
-              userId: authResult.userId,
+              userId: user.id,
               conversationId: params.conversationId,
               role: 'assistant',
               content: fullResponse.join(''),
@@ -295,38 +281,33 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
 
     return new Response(stream);
   }, {
+    auth: true,
     body: t.Object({
       content: t.String({ minLength: 1 }),
     }),
   })
 
-  .delete('/conversations/:conversationId', async ({ params, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .delete('/conversations/:conversationId', async ({ params, set, user }) => {
     const db = getDb();
-    
+
     const [conversation] = await db
       .select({ userId: conversations.userId })
       .from(conversations)
       .where(eq(conversations.id, params.conversationId))
       .limit(1);
 
-    if (!conversation || conversation.userId !== authResult.userId) {
+    if (!conversation || conversation.userId !== user.id) {
       set.status = 404;
       return { success: false, error: 'Conversation not found' };
     }
 
     await db.delete(conversations).where(eq(conversations.id, params.conversationId));
 
-    set.status = 204;
+    set.status = 200;
     return { success: true };
-  })
+  }, { auth: true })
 
-  .get('/search', async ({ query, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .get('/search', async ({ query, set, user }) => {
     const q = (query as Record<string, string | undefined>).q;
     if (!q) {
       set.status = 400;
@@ -334,8 +315,9 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
     }
 
     const db = getDb();
-    const limit = parseInt((query as Record<string, string | undefined>).limit ?? '10');
-    const searchLower = q.toLowerCase();
+    const limit = clampedInt((query as Record<string, string | undefined>).limit, 10, 1, 100);
+    const escapedQ = q.replace(/%/g, '\\%').replace(/_/g, '\\_');
+    const pattern = `%${escapedQ}%`;
 
     const userConversations = await db
       .select({
@@ -346,12 +328,9 @@ export const chatRoutes = new Elysia({ prefix: '/api/chat' })
         updatedAt: conversations.updatedAt,
       })
       .from(conversations)
-      .where(eq(conversations.userId, authResult.userId))
+      .where(sql`${conversations.userId} = ${user.id} AND ${conversations.title} ILIKE ${pattern}`)
+      .orderBy(desc(conversations.updatedAt))
       .limit(limit);
 
-    const filtered = userConversations.filter(c => 
-      c.title?.toLowerCase().includes(searchLower)
-    );
-
-    return { success: true, data: filtered };
-  });
+    return { success: true, data: userConversations };
+  }, { auth: true });

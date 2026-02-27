@@ -1,9 +1,10 @@
 import { Elysia, t } from 'elysia';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, ilike, or, sql } from 'drizzle-orm';
 import { researchService } from '../../services/research.service.js';
 import { getDb } from '../../db/connection.js';
 import { researchJobs } from '../../db/schema.js';
-import { authMiddleware } from '../../middleware/auth.js';
+import { authMacro } from '../../plugins/better-auth.plugin.js';
+import { clampedInt } from '../../utils/query-helpers.js';
 
 const CreateResearchSchema = t.Object({
   query: t.String({ minLength: 1 }),
@@ -14,12 +15,10 @@ const CreateResearchSchema = t.Object({
 });
 
 export const researchRoutes = new Elysia({ prefix: '/api/research' })
-  .post('/', async ({ body, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .use(authMacro)
+  .post('/', async ({ body, set, user }) => {
     const job = await researchService.createResearchJob({
-      userId: authResult.userId,
+      userId: user.id,
       query: body.query,
       context: body.context,
       focusAreas: body.focusAreas,
@@ -37,17 +36,15 @@ export const researchRoutes = new Elysia({ prefix: '/api/research' })
       },
     };
   }, {
+    auth: true,
     body: CreateResearchSchema,
   })
 
-  .get('/', async ({ query, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .get('/', async ({ query, user }) => {
     const db = getDb();
-    const limit = parseInt(query?.limit ?? '50');
-    const offset = parseInt(query?.offset ?? '0');
-    
+    const limit = clampedInt(query?.limit, 50, 1, 100);
+    const offset = clampedInt(query?.offset, 0, 0, 10000);
+
     const jobs = await db
       .select({
         id: researchJobs.id,
@@ -58,11 +55,11 @@ export const researchRoutes = new Elysia({ prefix: '/api/research' })
         result: researchJobs.result,
       })
       .from(researchJobs)
-      .where(eq(researchJobs.userId, authResult.userId))
+      .where(eq(researchJobs.userId, user.id))
       .orderBy(desc(researchJobs.createdAt))
       .limit(limit)
       .offset(offset);
-    
+
     return {
       success: true,
       data: jobs.map((job) => ({
@@ -74,12 +71,9 @@ export const researchRoutes = new Elysia({ prefix: '/api/research' })
         hasResult: !!job.result,
       })),
     };
-  })
+  }, { auth: true })
 
-  .get('/search', async ({ query, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .get('/search', async ({ query, set, user }) => {
     const q = (query as Record<string, string | undefined>).q;
     if (!q) {
       set.status = 400;
@@ -87,7 +81,10 @@ export const researchRoutes = new Elysia({ prefix: '/api/research' })
     }
 
     const db = getDb();
-    const limit = parseInt((query as Record<string, string | undefined>).limit ?? '10');
+    const limit = clampedInt((query as Record<string, string | undefined>).limit, 10, 1, 100);
+
+    const escapedQ = q.replace(/%/g, '\\%').replace(/_/g, '\\_');
+    const pattern = `%${escapedQ}%`;
 
     const jobs = await db
       .select({
@@ -99,19 +96,13 @@ export const researchRoutes = new Elysia({ prefix: '/api/research' })
         updatedAt: researchJobs.updatedAt,
       })
       .from(researchJobs)
-      .where(eq(researchJobs.userId, authResult.userId))
+      .where(sql`${researchJobs.userId} = ${user.id} AND (${researchJobs.query} ILIKE ${pattern} OR ${researchJobs.result}::text ILIKE ${pattern})`)
       .orderBy(desc(researchJobs.createdAt))
       .limit(limit);
 
-    const searchLower = q.toLowerCase();
-    const filtered = jobs.filter(job => 
-      job.query.toLowerCase().includes(searchLower) ||
-      (job.result && JSON.stringify(job.result).toLowerCase().includes(searchLower))
-    );
-
     return {
       success: true,
-      data: filtered.map((r) => ({
+      data: jobs.map((r) => ({
         jobId: r.id,
         query: r.query,
         status: r.status,
@@ -120,12 +111,9 @@ export const researchRoutes = new Elysia({ prefix: '/api/research' })
         hasResult: !!r.result,
       })),
     };
-  })
+  }, { auth: true })
 
-  .get('/:jobId', async ({ params, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .get('/:jobId', async ({ params, set, user }) => {
     const db = getDb();
     const [job] = await db
       .select({
@@ -143,7 +131,7 @@ export const researchRoutes = new Elysia({ prefix: '/api/research' })
       .where(eq(researchJobs.id, params.jobId))
       .limit(1);
 
-    if (!job || job.userId !== authResult.userId) {
+    if (!job || job.userId !== user.id) {
       set.status = 404;
       return { success: false, error: 'Research job not found' };
     }
@@ -161,12 +149,9 @@ export const researchRoutes = new Elysia({ prefix: '/api/research' })
         metadata: job.metadata,
       },
     };
-  })
+  }, { auth: true })
 
-  .get('/:jobId/report', async ({ params, set, cookie }) => {
-    const authResult = await authMiddleware({ cookie, set });
-    if (!authResult.success) return authResult;
-
+  .get('/:jobId/report', async ({ params, set, user }) => {
     const db = getDb();
     const [job] = await db
       .select({
@@ -180,7 +165,7 @@ export const researchRoutes = new Elysia({ prefix: '/api/research' })
       .where(eq(researchJobs.id, params.jobId))
       .limit(1);
 
-    if (!job || job.userId !== authResult.userId || !job.result) {
+    if (!job || job.userId !== user.id || !job.result) {
       set.status = 404;
       return { success: false, error: 'Research report not found' };
     }
@@ -194,4 +179,4 @@ export const researchRoutes = new Elysia({ prefix: '/api/research' })
         report: job.result,
       },
     };
-  });
+  }, { auth: true });

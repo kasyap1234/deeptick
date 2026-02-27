@@ -15,20 +15,20 @@ const useDropdownMenu = () => {
 const DropdownMenu = ({ children, open: controlledOpen, onOpenChange }: { children: React.ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void }) => {
   const [internalOpen, setInternalOpen] = React.useState(false);
   const isOpen = controlledOpen !== undefined ? controlledOpen : internalOpen;
-  const handleOpenChange = (value: boolean) => {
+  const handleOpenChange = React.useCallback((value: boolean) => {
     if (controlledOpen === undefined) setInternalOpen(value);
     onOpenChange?.(value);
-  };
+  }, [controlledOpen, onOpenChange]);
 
   React.useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    const handleClickOutside = () => {
       if (isOpen) {
         handleOpenChange(false);
       }
     };
     document.addEventListener("click", handleClickOutside);
     return () => document.removeEventListener("click", handleClickOutside);
-  }, [isOpen]);
+  }, [isOpen, handleOpenChange]);
 
   return (
     <DropdownMenuContext.Provider value={{ open: isOpen, onOpenChange: handleOpenChange }}>
